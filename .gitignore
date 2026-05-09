@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.coverage
+
+# Environment files
+.env
+uv.lock
+
+# Virtual environments
+.venv
+
+# Dev files
+.vscode/
+*.log
+debug*.*
+.devAssets/
+
+# Application data directories
+configs/
+outputs/
+logs/
+
+# Sensitive Data Files
+creds*.*
+secrets*.*

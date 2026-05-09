@@ -1,0 +1,9 @@
+# Docker Workspace
+.docker
+docker-compose.yaml
+
+# Dev Leftovers
+logs/
+.git
+*.md
+.cache
