@@ -3,7 +3,10 @@
 import asyncio
 import logging
 import queue
-from typing import Any, Callable
+import signal
+import threading
+from types import FrameType
+from typing import Any, Callable, cast
 
 from influxdb_client.client.write.point import Point
 from rich.console import Console
@@ -21,6 +24,7 @@ FetcherItems = list[str] | list[dict[str, Any]]
 FetcherResult = tuple[FetcherItems, list[Point]]
 FetcherReturn = tuple[FetcherItems | None, list[Point] | None] | None
 FetcherFunction = Callable[[HPEOAuth2Client], FetcherReturn]
+ShutdownSignalHandler = Callable[[int, FrameType | None], None]
 
 
 def _require_fetcher_result(fetcher: str, result: FetcherReturn) -> FetcherResult:
@@ -37,12 +41,12 @@ def _require_fetcher_result(fetcher: str, result: FetcherReturn) -> FetcherResul
     return fetcher_items, fetcher_points
 
 
-def main() -> None:
-    """AFIRA Entry point."""
+def run_once(env_vars: EnvironmentsVariables) -> int:
+    """Run one AFIRA collection cycle and return the number of collected points."""
     logger = logging.getLogger("AFIRA.Main")
     creds: dict[str, Any] = retrieve_creds()
     res_points: list[Point] = []
-    res: dict[str, Any] = {}
+    res: dict[str, FetcherItems] = {}
     fetcher_func: dict[str, FetcherFunction] = {
         "site_health": site_health,
         "device_data": device_data,
@@ -54,6 +58,8 @@ def main() -> None:
         "clients_data": clients_data,
         "web_app_data": web_app_data,
     }
+
+    test_db_setup(setting=env_vars.influxdb)
 
     with HPEOAuth2Client(**creds["new_central"]) as aruba_api:
         logger.debug("Successfully authenticated with HPE Aruba Central API.")
@@ -70,44 +76,44 @@ def main() -> None:
                 raise
         logger.debug("Start Site Details Fetchers loop")
         for fetcher, func in site_details_func.items():
-            for site_id in res["site_health"]:
+            for site_id in cast(list[str], res["site_health"]):
                 try:
                     logger.info(f"Running site details fetcher: {fetcher}")
                     points = func(aruba_api, site_id)
                     res_points.extend(points)
-                    logger.debug(f"Site details fetcher {fetcher} returned {len(points)} points", points)
+                    logger.debug("Site details fetcher %s returned %s points: %s", fetcher, len(points), points)
                 except Exception as e:
                     logger.warning(
                         f"Site details fetcher {fetcher} failed with error: {e}. Continuing with other fetchers."
                     )
         logger.debug("Start Wlan Details Fetcher loop")
-        for wlan in res["wlan_data"]:
+        for wlan in cast(list[str], res["wlan_data"]):
             try:
                 logger.info(f"Running WLAN details fetcher for WLAN: {wlan}")
                 points = wlan_trhougput_trends(aruba_api, wlan)
                 res_points.extend(points)
-                logger.debug(f"WLAN details fetcher for {wlan} returned {len(points)} points", points)
+                logger.debug("WLAN details fetcher for %s returned %s points: %s", wlan, len(points), points)
             except Exception as e:
                 logger.warning(f"WLAN details fetcher for {wlan} failed with error: {e}. Continuing with other WLANs.")
         logger.debug("Start Device Hw Details Fetcher loop")
-        for device in res["device_data"]:
+        for device in cast(list[dict[str, Any]], res["device_data"]):
+            serial_number = str(device.get("serial_number", "unknown"))
             try:
-                match device.get("device_type", ""):
+                device_points: list[Point] = []
+                match str(device.get("device_type", "")):
                     case "ACCESS_POINT":
-                        res_points.extend(ap_data(aruba_api, device.get("serial_number")))
-                        res_points.extend(ap_cpu_util(aruba_api, device.get("serial_number")))
-                        res_points.extend(ap_mem_util(aruba_api, device.get("serial_number")))
-                        res_points.extend(ap_power_util(aruba_api, device.get("serial_number")))
+                        device_points.extend(ap_data(aruba_api, serial_number))
+                        device_points.extend(ap_cpu_util(aruba_api, serial_number))
+                        device_points.extend(ap_mem_util(aruba_api, serial_number))
+                        device_points.extend(ap_power_util(aruba_api, serial_number))
                     case "SWITCH":
-                        res_points.extend(switch_data(aruba_api, device.get("serial_number")))
-                        res_points.extend(switch_hw_data(aruba_api, device.get("serial_number")))
-                logger.debug(
-                    f"Device details fetcher for {device.get('serial_number', 'unknown')} returned points",
-                    res_points[-1],
-                )
+                        device_points.extend(switch_data(aruba_api, serial_number))
+                        device_points.extend(switch_hw_data(aruba_api, serial_number))
+                res_points.extend(device_points)
+                logger.debug("Device details fetcher for %s returned %s points", serial_number, len(device_points))
             except Exception as e:
                 logger.warning(
-                    f"Device details fetcher for {device.get('serial_number', 'unknown')} failed with error: {e}."
+                    f"Device details fetcher for {serial_number} failed with error: {e}."
                     "Continuing with other devices."
                 )
         # TODO: Add Radio Data Fetcher loop here when implemented
@@ -115,32 +121,78 @@ def main() -> None:
     _ = asyncio.run(store_points(points=res_points, influx_conf=env_vars.influxdb, debug_mode=env_vars.debug_mode))
 
     logger.debug(f"Finished all fetchers. Total points collected: {len(res_points)}")
+    return len(res_points)
+
+
+def run_forever(env_vars: EnvironmentsVariables, shutdown_event: threading.Event) -> None:
+    """Run AFIRA collection cycles indefinitely until a shutdown signal is received."""
+    logger = logging.getLogger("AFIRA.Main")
+    iteration: int = 0
+
+    logger.info("AFIRA loop started with %s seconds between iterations.", env_vars.loop_sleep_seconds)
+
+    while not shutdown_event.is_set():
+        iteration += 1
+        try:
+            logger.info("Starting AFIRA iteration %s", iteration)
+            point_count = run_once(env_vars=env_vars)
+            logger.info("AFIRA iteration %s completed with %s points.", iteration, point_count)
+        except Exception:
+            logger.exception(
+                "AFIRA iteration %s failed. Sleeping %s seconds before retrying.",
+                iteration,
+                env_vars.loop_sleep_seconds,
+            )
+
+        if shutdown_event.is_set():
+            break
+
+        logger.info("AFIRA sleeping %s seconds before the next iteration.", env_vars.loop_sleep_seconds)
+        shutdown_event.wait(timeout=int(env_vars.loop_sleep_seconds))
+
+    logger.info("AFIRA loop stopped.")
+
+
+def _build_shutdown_signal_handler(shutdown_event: threading.Event, logger: logging.Logger) -> ShutdownSignalHandler:
+    """Create a signal handler that asks the AFIRA loop to stop gracefully."""
+
+    def _handle_shutdown_signal(signum: int, _frame: FrameType | None) -> None:
+        try:
+            signal_name = signal.Signals(signum).name
+        except ValueError:
+            signal_name = str(signum)
+
+        logger.info("AFIRA received shutdown signal %s. Exiting after the current iteration.", signal_name)
+        shutdown_event.set()
+
+    return _handle_shutdown_signal
+
+
+def _register_shutdown_signal_handlers(shutdown_event: threading.Event, logger: logging.Logger) -> None:
+    """Register container-friendly SIGTERM and SIGINT handlers."""
+    handler = _build_shutdown_signal_handler(shutdown_event=shutdown_event, logger=logger)
+    signal.signal(signal.SIGTERM, handler)
+    signal.signal(signal.SIGINT, handler)
 
 
 if __name__ == "__main__":
     console: Console = Console()
     console.print("[bold green]Starting AFIRA...[/bold green]")
 
-    global env_vars
     env_vars = EnvironmentsVariables()
+    shutdown_event = threading.Event()
 
-    log_q: queue.Queue = queue.Queue(maxsize=-1)
+    log_q: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=-1)
 
-    with logging_context(
-        settings=env_vars.logging, console=console, log_queue=log_q, level=env_vars.log_level
-    ) as log_listener:
+    with logging_context(settings=env_vars.logging, console=console, log_queue=log_q, level=env_vars.log_level):
         logging_helper.worker_logger(log_queue=log_q, **env_vars.logging.model_dump())
         log = logging.getLogger("AFIRA")
+        _register_shutdown_signal_handlers(shutdown_event=shutdown_event, logger=log)
         log.info("AFIRA is starting")
         try:
-            test_db_setup(setting=env_vars.influxdb)
-            main()
-        except KeyboardInterrupt:
-            log.info("AFIRA received shutdown signal (KeyboardInterrupt). Exiting gracefully...")
-        except ConnectionError as ce:
-            log.error(f"AFIRA encountered a connection error: {ce}", exc_info=False, stack_info=False)
+            run_forever(env_vars=env_vars, shutdown_event=shutdown_event)
         except Exception as e:
             log.critical(msg=f"AFIRA encountered a critical error: {e}", exc_info=True, stack_info=True)
             raise SystemExit(1) from e
         finally:
-            log.info("AFIRA finished iterations, shutting down!")
+            log.info("AFIRA shutdown complete.")

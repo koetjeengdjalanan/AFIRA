@@ -4,6 +4,15 @@ docker-compose.yaml
 
 # Dev Leftovers
 logs/
+outputs/
 .git
+.venv/
+.pytest_cache/
+__pycache__/
 *.md
 .cache
+
+# Local secrets and runtime configuration
+.env
+.env.*
+creds.yaml

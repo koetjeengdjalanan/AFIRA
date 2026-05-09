@@ -152,7 +152,9 @@ class LoggingSettings(BaseModel):
     """
 
     log_file_path: Path = Field(
-        Path(getenv("LOG_FILE_PATH", "./logs/mandiri-MONA.log")).absolute(), description="Path to the log file"
+        Path(getenv("LOG_FILE_PATH", "./logs/mandiri-MONA.log")).absolute(),
+        description="Path to the log file",
+        validate_default=True,
     )
     log_rotate_time: str = Field(str(getenv("LOG_ROTATE_TIME", "w0")), description="Log rotation interval")
     log_backup_count: int = Field(
@@ -301,6 +303,8 @@ class EnvironmentsVariables(BaseModel):
             variable. Accepts "true", "1", or "t" (case-insensitive) as True values.
         log_level (Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]): The logging
             level for the application. Defaults to "INFO" if not specified.
+        loop_sleep_seconds (PositiveInt): Sleep interval between AFIRA collection
+            cycles. Reads from AFIRA_LOOP_SLEEP_SECONDS and defaults to 300.
         compatibility_mode (StrictBool): Flag to enable compatibility mode for older reports
             models. Defaults to False.
         verbose (StrictBool): User verbosity flag. When set to True, changes the debug
@@ -330,6 +334,10 @@ class EnvironmentsVariables(BaseModel):
         bool(getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")), description="Enables debug mode"
     )
     log_level: LogLevel = Field(default_factory=_get_log_level, description="Logging level for the application")
+    loop_sleep_seconds: PositiveInt = Field(
+        default_factory=lambda: int(getenv("AFIRA_LOOP_SLEEP_SECONDS", "300")),
+        description="Sleep interval in seconds between AFIRA collection cycles",
+    )
     compatibility_mode: StrictBool = Field(False, description="Enables compatibility mode for older reports models")
     verbose: StrictBool = Field(False, description="User verbosity flag, will change debug level to DEBUG if set")
     file_paths: FilePathConfig = Field(default_factory=lambda: FilePathConfig())
