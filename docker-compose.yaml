@@ -18,19 +18,17 @@ services:
       timeout: 10s
       retries: 10
 
-  # afira-service:
-  #   build:
-  #     context: ./.docker
-  #     dockerfile: afira.dockerfile
-  #   depends_on:
-  #     influxdb:
-  #       condition: service_healthy
-  #   env_file:
-  #     - .env
-  #   working_dir: /app
-  #   command: ["./venv/bin/python", "main.py"]
-  #   volumes:
-  #     - afira-volumes:/app
+  afira-service:
+    build:
+      context: .
+      dockerfile: .docker/afira.dockerfile
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    env_file:
+      - .env
+    working_dir: /app
+    command: ["./venv/bin/python", "main.py"]
 
   grafana:
     image: grafana/grafana:latest
