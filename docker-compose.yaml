@@ -28,7 +28,7 @@ services:
     env_file:
       - .env
     working_dir: /app
-    command: ["./venv/bin/python", "main.py"]
+    command: ["./.venv/bin/python", "main.py"]
 
   grafana:
     image: grafana/grafana:latest
