@@ -27,6 +27,8 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    volumes:
+      - ./creds.yaml:/app/creds.yaml:ro
     working_dir: /app
     command: ["./.venv/bin/python", "main.py"]
 
@@ -42,9 +44,6 @@ services:
       GF_RENDERING_SERVER_URL: ${GF_RENDERING_SERVER_URL}
       GF_RENDERING_CALLBACK_URL: ${GF_RENDERING_CALLBACK_URL}
       GF_RENDERING_RENDERER_TOKEN: ${GF_RENDERING_RENDERER_TOKEN}
-    # depends_on:
-    #   afira-service:
-    #     condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
       interval: 60s
@@ -62,6 +61,8 @@ services:
       timeout: 30s
       retries: 5
       start_period: 30s
+  
+  #TODO: add ngrok to expose grafana to the internet for testing
 
 
 volumes:

@@ -14,3 +14,7 @@ __pycache__/
 
 # Local secrets and runtime configuration
 .env.*
+
+# Ommit Credentials and secrets needed
+.env
+creds.*

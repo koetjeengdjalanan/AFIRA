@@ -20,6 +20,8 @@ frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
+humanize==4.15.0
+    # via afira (pyproject.toml)
 idna==3.13
     # via
     #   requests

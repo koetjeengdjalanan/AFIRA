@@ -575,6 +575,8 @@ class HPEOAuth2Client(BaseModel):
         Returns:
             Configured Tenacity ``Retrying`` instance using exponential backoff.
         """
+        # BUG: Retrying seems not working properly because there is no Log and the production side seems fail at first
+        # fetch error without retrying, need to investigate more
         return Retrying(
             retry=retry_if_exception_type(RequestException) | retry_if_result(self._should_retry_response),
             stop=stop_after_attempt(self.retry_attempts),

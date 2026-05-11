@@ -5,9 +5,11 @@ import logging
 import queue
 import signal
 import threading
+from datetime import datetime
 from types import FrameType
 from typing import Any, Callable, cast
 
+from humanize import precisedelta
 from influxdb_client.client.write.point import Point
 from rich.console import Console
 
@@ -132,16 +134,22 @@ def run_forever(env_vars: EnvironmentsVariables, shutdown_event: threading.Event
     logger.info("AFIRA loop started with %s seconds between iterations.", env_vars.loop_sleep_seconds)
 
     while not shutdown_event.is_set():
+        start_time = datetime.now()
         iteration += 1
         try:
-            logger.info("Starting AFIRA iteration %s", iteration)
+            logger.info("Starting AFIRA iteration")
             point_count = run_once(env_vars=env_vars)
-            logger.info("AFIRA iteration %s completed with %s points.", iteration, point_count)
+            logger.info(
+                "AFIRA iteration completed at %s with %s points.",
+                precisedelta(datetime.now() - start_time),
+                point_count,
+            )
         except Exception:
             logger.exception(
-                "AFIRA iteration %s failed. Sleeping %s seconds before retrying.",
+                "AFIRA iteration %s failed. Sleeping %s seconds before retrying. After duration: %s",
                 iteration,
                 env_vars.loop_sleep_seconds,
+                precisedelta(datetime.now() - start_time),
             )
 
         if shutdown_event.is_set():
@@ -183,8 +191,10 @@ if __name__ == "__main__":
     shutdown_event = threading.Event()
 
     log_q: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=-1)
+    # TODO: Add a healthcheck for container readiness and liveness, and add a log message when the healthcheck is ready.
 
     with logging_context(settings=env_vars.logging, console=console, log_queue=log_q, level=env_vars.log_level):
+        # BUG: Logger is not writing a log file!
         logging_helper.worker_logger(log_queue=log_q, **env_vars.logging.model_dump())
         log = logging.getLogger("AFIRA")
         _register_shutdown_signal_handlers(shutdown_event=shutdown_event, logger=log)
