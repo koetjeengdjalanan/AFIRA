@@ -60,6 +60,18 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
         "clients_data": clients_data,
         "web_app_data": web_app_data,
     }
+    device_details_func: dict[str, dict[str, Callable[[HPEOAuth2Client, str], list[Point]]]] = {
+        "ACCESS_POINT": {
+            "ap_data": ap_data,
+            "ap_cpu_util": ap_cpu_util,
+            "ap_mem_util": ap_mem_util,
+            "ap_power_util": ap_power_util,
+        },
+        "SWITCH": {
+            "switch_data": switch_data,
+            "switch_hw_data": switch_hw_data,
+        },
+    }
 
     test_db_setup(setting=env_vars.influxdb)
 
@@ -99,20 +111,29 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
                 logger.warning(f"WLAN details fetcher for {wlan} failed with error: {e}. Continuing with other WLANs.")
         logger.debug("Start Device Hw Details Fetcher loop")
         for device in cast(list[dict[str, Any]], res["device_data"]):
-            serial_number = str(device.get("serial_number", "unknown"))
+            serial_number = cast(str, device.get("serial_number", "unknown"))
             try:
-                device_points: list[Point] = []
-                match str(device.get("device_type", "")):
-                    case "ACCESS_POINT":
-                        device_points.extend(ap_data(aruba_api, serial_number))
-                        device_points.extend(ap_cpu_util(aruba_api, serial_number))
-                        device_points.extend(ap_mem_util(aruba_api, serial_number))
-                        device_points.extend(ap_power_util(aruba_api, serial_number))
-                    case "SWITCH":
-                        device_points.extend(switch_data(aruba_api, serial_number))
-                        device_points.extend(switch_hw_data(aruba_api, serial_number))
-                res_points.extend(device_points)
-                logger.debug("Device details fetcher for %s returned %s points", serial_number, len(device_points))
+                device_type = cast(str, device.get("device_type", "unknown"))
+                if device_type not in device_details_func:
+                    logger.warning(
+                        f"Device type {device_type} for device with serial number {serial_number} is not supported."
+                        "Skipping device details fetchers for this device."
+                    )
+                    continue
+                for device_details, func in device_details_func.get(device_type, {}).items():
+                    logger.info(
+                        f"Running device details fetcher {device_details}"
+                        f"for device with serial number: {serial_number}"
+                    )
+                    points = func(aruba_api, serial_number)
+                    res_points.extend(points)
+                    logger.debug(
+                        "Device details fetcher %s for device %s returned %s points: %s",
+                        device_details,
+                        serial_number,
+                        len(points),
+                        points,
+                    )
             except Exception as e:
                 logger.warning(
                     f"Device details fetcher for {serial_number} failed with error: {e}."
