@@ -45,6 +45,9 @@ DOCKER_INFLUXDB_INIT_ORG=OneTeam
 DOCKER_INFLUXDB_INIT_BUCKET=afira
 DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-auth-token
 LOG_FILE_PATH=./logs/afira.log
+LOG_INFLUXDB_ENABLED=True
+LOG_INFLUXDB_LEVEL=INFO
+LOG_INFLUXDB_MEASUREMENT=afira_logs
 ```
 
 Create `creds.yaml` in the project root with your HPE Aruba Central OAuth
@@ -154,6 +157,12 @@ AFIRA_LOOP_SLEEP_SECONDS=300
 
 The default is 300 seconds, or 5 minutes. Use a higher value to reduce HPE API
 and InfluxDB write volume. Use a lower value if you need fresher dashboard data.
+
+`LOG_LEVEL` controls file and console logging. `LOG_INFLUXDB_LEVEL` controls
+the minimum level written to InfluxDB. Log records are written to the configured
+InfluxDB bucket using `LOG_INFLUXDB_MEASUREMENT`, which defaults to
+`afira_logs`. Set `LOG_INFLUXDB_ENABLED=False` only when you want to disable
+InfluxDB log storage.
 
 ## Development Checks
 

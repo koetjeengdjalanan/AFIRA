@@ -483,3 +483,59 @@ def switch_hw_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Poin
         )
         points.append(point)
     return points
+
+
+def gateways_hw_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Point]:
+    """
+    Gateways hardware details.
+
+    Fetch gateway hardware data from the HPE Network Monitoring API for a given serial number
+    and return it as a list containing a single InfluxDB point.
+
+    Parameters:
+        api_client (HPEOAuth2Client): Authenticated API client for HPE OAuth2 requests.
+        serial_number (str): Serial number of the gateway to retrieve.
+
+    Returns:
+        list[Point]: A list with one Point object populated with gateway metadata and status fields.
+
+    Raises:
+        ConnectionError: If the API response is not successful or contains no JSON payload.
+    """
+    res = api_client.get(
+        endpoint=f"/network-monitoring/v1/gateways/{serial_number}", headers={"Accept": "application/json"}
+    )
+
+    if not res.ok or not res.json():
+        raise ConnectionError(
+            f"[gateways_hw_data] - unexpected response for gateway serial number {serial_number}. Response: {res.text}",
+            res.url,
+        )
+
+    data = res.json()
+
+    point = (
+        Point("gateway_metrics")
+        .tag("serial_number", data.get("serialNumber", "unknown"))
+        .tag("site_id", data.get("siteId", "unknown"))
+        .tag("site_name", data.get("siteName", "unknown"))
+        .tag("device_name", data.get("deviceName", "unknown"))
+        .tag("role", data.get("role", "unknown"))
+        .tag("deployment", data.get("deployment", "unknown"))
+        .tag("cluster_name", data.get("clusterName", "unknown"))
+        .tag("model", data.get("model", "unknown"))
+        .tag("mac_address", data.get("macAddress", "unknown"))
+        .tag("persona", data.get("persona", "unknown"))
+        .field("status", data.get("status", "unknown"))
+        .field("public_ipv4", data.get("publicIpv4", "unknown"))
+        .field("ipv4", data.get("ipv4", "unknown"))
+        .field("ipv6", data.get("ipv6", "unknown"))
+        .field("uptime_in_millis", data.get("uptimeInMillis", 0))
+        .field("software_version", data.get("softwareVersion", "unknown"))
+        .field("last_restart_reason", data.get("lastRestartReason", "unknown"))
+        .field("manufacturer", data.get("manufacturer", "unknown"))
+        .field("part_number", data.get("partNumber", "unknown"))
+        .field("failure_reason", data.get("failureReason", "unknown"))
+    )
+
+    return [point]
