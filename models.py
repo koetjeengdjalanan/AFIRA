@@ -1,9 +1,11 @@
 """Environment variable settings."""
 
+import logging
 import threading
 import time
 from os import getenv
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Literal, Optional, cast
 
 from oauthlib.oauth2.rfc6749.clients.backend_application import BackendApplicationClient
@@ -47,6 +49,30 @@ def _get_log_level() -> LogLevel:
     return cast(LogLevel, level)
 
 
+def _get_influxdb_log_level() -> LogLevel:
+    """Return the configured InfluxDB logging level, falling back to LOG_LEVEL."""
+    level = getenv("LOG_INFLUXDB_LEVEL", getenv("LOG_LEVEL", "INFO")).upper()
+    if level not in _VALID_LOG_LEVELS:
+        return "INFO"
+    return cast(LogLevel, level)
+
+
+def _get_influxdb_logging_enabled() -> bool:
+    """Return whether application log records should be written to InfluxDB."""
+    configured_value = getenv("LOG_INFLUXDB_ENABLED")
+    if configured_value is not None:
+        return _get_bool_env("LOG_INFLUXDB_ENABLED")
+    return getenv("LOG_INFLUXDB_LEVEL") is not None
+
+
+def _get_bool_env(name: str, default: bool = False) -> bool:
+    """Return a boolean environment value."""
+    value = getenv(name)
+    if value is None:
+        return default
+    return value.lower() in ("true", "1", "t", "yes", "y", "on")
+
+
 class ConnectionSettings(BaseModel):
     """
     Configuration model for connection and concurrency settings.
@@ -83,14 +109,20 @@ class ConnectionSettings(BaseModel):
     """
 
     max_retry: PositiveInt = Field(
-        int(getenv("MAX_RETRY", "3")), description="Maximum number of retry attempts for failed connections"
+        default_factory=lambda: int(getenv("MAX_RETRY", "3")),
+        description="Maximum number of retry attempts for failed connections",
     )
-    conn_timeout: PositiveInt = Field(int(getenv("CONN_TIMEOUT", "30")), description="Connection timeout in seconds")
+    conn_timeout: PositiveInt = Field(
+        default_factory=lambda: int(getenv("CONN_TIMEOUT", "30")),
+        description="Connection timeout in seconds",
+    )
     read_timeout_override: PositiveInt = Field(
-        int(getenv("READ_TIMEOUT_OVERRIDE", "60")), description="Read timeout override value in seconds"
+        default_factory=lambda: int(getenv("READ_TIMEOUT_OVERRIDE", "60")),
+        description="Read timeout override value in seconds",
     )
     num_of_threads: PositiveInt = Field(
-        int(getenv("NUM_OF_THREADS", "8")), description="Number of threads to use for concurrent operations"
+        default_factory=lambda: int(getenv("NUM_OF_THREADS", "8")),
+        description="Number of threads to use for concurrent operations",
     )
 
     @field_validator("conn_timeout", "read_timeout_override")
@@ -137,6 +169,12 @@ class LoggingSettings(BaseModel):
             Defaults to "%(asctime)s - %(levelname)s - %(message)s".
         log_datetime_format (str): The datetime format string for log messages.
             Defaults to "%Y-%m-%d %H:%M:%S" if LOG_DATETIME_FORMAT environment variable is not set.
+        log_influxdb_enabled (StrictBool): Flag to write log records to InfluxDB. Defaults
+            to True when LOG_INFLUXDB_LEVEL is configured, unless LOG_INFLUXDB_ENABLED is set.
+        log_influxdb_level (LogLevel): Minimum log level for writing log records to InfluxDB.
+            Defaults to LOG_LEVEL or INFO if LOG_INFLUXDB_LEVEL environment variable is not set.
+        log_influxdb_measurement (StrictStr): InfluxDB measurement name for log records.
+            Defaults to "afira_logs" if LOG_INFLUXDB_MEASUREMENT environment variable is not set.
 
     Environment Variables:
         LOG_FILE_PATH: Path to the log file (optional)
@@ -144,6 +182,9 @@ class LoggingSettings(BaseModel):
         LOG_BACKUP_COUNT: Number of backup logs to keep (optional)
         LOG_FORMAT: Log message format (optional)
         LOG_DATETIME_FORMAT: Log datetime format (optional)
+        LOG_INFLUXDB_ENABLED: Enables InfluxDB log writes (optional)
+        LOG_INFLUXDB_LEVEL: Minimum level for InfluxDB log writes (optional)
+        LOG_INFLUXDB_MEASUREMENT: InfluxDB measurement name for log writes (optional)
 
     Example:
         >>> settings = LoggingSettings()
@@ -152,22 +193,42 @@ class LoggingSettings(BaseModel):
     """
 
     log_file_path: Path = Field(
-        Path(getenv("LOG_FILE_PATH", "./logs/mandiri-MONA.log")).absolute(),
+        default_factory=lambda: Path(getenv("LOG_FILE_PATH", "./logs/mandiri-MONA.log")).absolute(),
         description="Path to the log file",
         validate_default=True,
     )
-    log_rotate_time: str = Field(str(getenv("LOG_ROTATE_TIME", "w0")), description="Log rotation interval")
-    log_backup_count: int = Field(
-        int(getenv("LOG_BACKUP_COUNT", "9")), description="Number of backup log files to retain"
+    log_rotate_time: str = Field(
+        default_factory=lambda: str(getenv("LOG_ROTATE_TIME", "w0")),
+        description="Log rotation interval",
     )
-    log_format: str = Field("%(asctime)s - %(levelname)s - %(message)s", description="Log message format")
+    log_backup_count: int = Field(
+        default_factory=lambda: int(getenv("LOG_BACKUP_COUNT", "9")),
+        description="Number of backup log files to retain",
+    )
+    log_format: str = Field(
+        default_factory=lambda: str(getenv("LOG_FORMAT", "%(asctime)s - %(levelname)s - %(message)s")),
+        description="Log message format",
+    )
     log_datetime_format: str = Field(
-        str(getenv("LOG_DATETIME_FORMAT", "%Y-%m-%d %H:%M:%S")), description="Log datetime format"
+        default_factory=lambda: str(getenv("LOG_DATETIME_FORMAT", "%Y-%m-%d %H:%M:%S")),
+        description="Log datetime format",
+    )
+    log_influxdb_enabled: StrictBool = Field(
+        default_factory=_get_influxdb_logging_enabled,
+        description="Enables writing application logs to InfluxDB",
+    )
+    log_influxdb_level: LogLevel = Field(
+        default_factory=_get_influxdb_log_level,
+        description="Minimum log level for InfluxDB log writes",
+    )
+    log_influxdb_measurement: StrictStr = Field(
+        default_factory=lambda: str(getenv("LOG_INFLUXDB_MEASUREMENT", "afira_logs")),
+        description="InfluxDB measurement for application logs",
     )
 
     @field_validator("log_file_path", mode="before")
     @classmethod
-    def validate_log_file_path(cls, v: Path) -> Path:
+    def validate_log_file_path(cls, v: Path | str) -> Path:
         """Validate that the log file path points to a valid `.log` file and create the file if it does not exist."""
         path = Path(v) if isinstance(v, str) else v
         if path.suffix != ".log":
@@ -199,20 +260,21 @@ class FilePathConfig(BaseModel):
     """
 
     fw_creds: FilePath = Field(
-        Path(getenv("FW_CREDS_PATH", "./configs/fw_creds.csv")).absolute(),
+        default_factory=lambda: Path(getenv("FW_CREDS_PATH", "./configs/fw_creds.csv")).absolute(),
         description="Path to firewall credentials CSV file.",
     )
     sshd_config: FilePath = Field(
-        Path(getenv("SSHD_CONFIG_PATH", "./configs/sshd_config")).absolute(),
+        default_factory=lambda: Path(getenv("SSHD_CONFIG_PATH", "./configs/sshd_config")).absolute(),
         description="Path to SSH daemon configuration file.",
     )
     output_dir: DirectoryPath = Field(
-        Path(getenv("OUTPUT_DIR_PATH", "./outputs/")).absolute(), description="Path to output directory."
+        default_factory=lambda: Path(getenv("OUTPUT_DIR_PATH", "./outputs/")).absolute(),
+        description="Path to output directory.",
     )
 
     @field_validator("fw_creds", "sshd_config", mode="before")
     @classmethod
-    def validate_file_paths(cls, v: Path) -> Path:
+    def validate_file_paths(cls, v: Path | str) -> Path:
         """Validate that the file paths point to valid files and create the files if they do not exist."""
         path = Path(v) if isinstance(v, str) else v
         if not path.exists():
@@ -221,7 +283,7 @@ class FilePathConfig(BaseModel):
 
     @field_validator("output_dir", mode="before")
     @classmethod
-    def validate_output_dir(cls, v: Path) -> Path:
+    def validate_output_dir(cls, v: Path | str) -> Path:
         """Validate that the output directory path points to a valid directory and create it if it does not exist."""
         path = Path(v) if isinstance(v, str) else v
         if not path.exists():
@@ -252,7 +314,7 @@ class InfluxDBSettings(BaseModel):
         default_factory=lambda: (getenv("INFLUXDB_TOKEN") or getenv("DOCKER_INFLUXDB_INIT_ADMIN_TOKEN") or ""),
         description="InfluxDB authentication token",
     )
-    url: StrictStr = Field(default=getenv("INFLUXDB_URL", ""), description="InfluxDB URL")
+    url: StrictStr = Field(default_factory=lambda: getenv("INFLUXDB_URL", ""), description="InfluxDB URL")
     org: StrictStr = Field(
         default_factory=lambda: (getenv("INFLUXDB_ORG", "") or getenv("DOCKER_INFLUXDB_INIT_ORG", "")),
         description="InfluxDB organization",
@@ -262,23 +324,27 @@ class InfluxDBSettings(BaseModel):
         description="InfluxDB bucket",
     )
     connection_pool_maxsize: PositiveInt = Field(
-        int(getenv("INFLUXDB_CONNECTION_POOL_MAXSIZE", "10")),
+        default_factory=lambda: int(getenv("INFLUXDB_CONNECTION_POOL_MAXSIZE", "10")),
         description="Maximum number of concurrent HTTP connections to InfluxDB",
     )
     max_retries: PositiveInt = Field(
-        int(getenv("INFLUXDB_MAX_RETRIES", "2")), description="Maximum retry attempts for failed writes"
+        default_factory=lambda: int(getenv("INFLUXDB_MAX_RETRIES", "2")),
+        description="Maximum retry attempts for failed writes",
     )
     timeout_ms: PositiveInt = Field(
-        int(getenv("INFLUXDB_TIMEOUT_MS", "30_000")), description="Request timeout in milliseconds"
+        default_factory=lambda: int(getenv("INFLUXDB_TIMEOUT_MS", "30_000")),
+        description="Request timeout in milliseconds",
     )
     batch_size: PositiveInt = Field(
-        int(getenv("INFLUXDB_BATCH_SIZE", "500")), description="Number of points to batch before writing"
+        default_factory=lambda: int(getenv("INFLUXDB_BATCH_SIZE", "500")),
+        description="Number of points to batch before writing",
     )
     flush_interval_ms: PositiveInt = Field(
-        int(getenv("INFLUXDB_FLUSH_INTERVAL_MS", "10_000")), description="Flush interval in milliseconds"
+        default_factory=lambda: int(getenv("INFLUXDB_FLUSH_INTERVAL_MS", "10_000")),
+        description="Flush interval in milliseconds",
     )
 
-    def conn_params(self) -> dict[str, str | int]:
+    def conn_params(self) -> dict[str, str | int | bool]:
         """Return InfluxDB connection parameters as a dictionary."""
         return {
             "url": str(self.url),
@@ -331,7 +397,8 @@ class EnvironmentsVariables(BaseModel):
     """
 
     debug_mode: StrictBool = Field(
-        bool(getenv("DEBUG_MODE", "False").lower() in ("true", "1", "t")), description="Enables debug mode"
+        default_factory=lambda: _get_bool_env("DEBUG_MODE"),
+        description="Enables debug mode",
     )
     log_level: LogLevel = Field(default_factory=_get_log_level, description="Logging level for the application")
     loop_sleep_seconds: PositiveInt = Field(
@@ -441,7 +508,12 @@ class HPEOAuth2Client(BaseModel):
         self.ensure_token()
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         """Close the underlying OAuth session when leaving a context manager.
 
         Args:
@@ -543,15 +615,130 @@ class HPEOAuth2Client(BaseModel):
             ``True`` when the response is rate-limited, server-side, or carries
             an HPE response envelope whose status is not ``SUCCESS``.
         """
+        return cls._retry_response_reason(response) is not None
+
+    @classmethod
+    def _retry_response_reason(cls, response: Response) -> str | None:
+        """Return a human-readable retry reason for a response, if it is retryable.
+
+        Args:
+            response (Response): Response returned by the OAuth session.
+
+        Returns:
+            Retry reason text, or ``None`` when the response should not be retried.
+        """
         status_code = response.status_code
         if isinstance(status_code, int) and (status_code in {408, 409, 425, 429} or status_code >= 500):
-            return True
+            return f"HTTP {status_code}"
 
         hpe_status = cls._response_status(response)
-        return hpe_status is not None and hpe_status != "SUCCESS"
+        if hpe_status is not None and hpe_status != "SUCCESS":
+            return f"HPE response status {hpe_status}"
+
+        return None
 
     @staticmethod
-    def _last_retry_result(retry_state: RetryCallState) -> Response:
+    def _retry_request_context(retry_state: RetryCallState) -> tuple[str, str]:
+        """Return the HTTP method and URL for a retry attempt.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the active retry loop.
+
+        Returns:
+            Tuple of request method and URL when available.
+        """
+        method = str(retry_state.args[0]) if len(retry_state.args) >= 1 else "UNKNOWN"
+        url = str(retry_state.args[1]) if len(retry_state.args) >= 2 else "unknown-url"
+        return method, url
+
+    @staticmethod
+    def _retry_sleep_seconds(retry_state: RetryCallState) -> float:
+        """Return the planned sleep before the next retry attempt.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the active retry loop.
+
+        Returns:
+            Planned sleep in seconds, or ``0.0`` when Tenacity has no next action.
+        """
+        if retry_state.next_action is None:
+            return 0.0
+        return float(retry_state.next_action.sleep)
+
+    @staticmethod
+    def _response_body_preview(response: Response, max_length: int = 500) -> str:
+        """Return a single-line response body preview suitable for logs.
+
+        Args:
+            response (Response): Response returned by the OAuth session.
+            max_length (int): Maximum preview length.
+
+        Returns:
+            Response text with newlines escaped and long values truncated.
+        """
+        body = response.text.replace("\n", "\\n")
+        if len(body) <= max_length:
+            return body
+        return f"{body[:max_length]}..."
+
+    def _log_retry_attempt(self, retry_state: RetryCallState) -> None:
+        """Log why Tenacity will retry an HPE API request.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the active retry loop.
+        """
+        logger = logging.getLogger("AFIRA.HPEOAuth2Client")
+        method, url = self._retry_request_context(retry_state)
+        next_attempt = retry_state.attempt_number + 1
+        sleep_seconds = self._retry_sleep_seconds(retry_state)
+        outcome = retry_state.outcome
+
+        if outcome is None:
+            logger.warning(
+                "HPE API request attempt %s/%s failed without an outcome. "
+                "Retrying attempt %s/%s in %.2f seconds: %s %s",
+                retry_state.attempt_number,
+                self.retry_attempts,
+                next_attempt,
+                self.retry_attempts,
+                sleep_seconds,
+                method,
+                url,
+            )
+            return
+
+        if outcome.failed:
+            exception = outcome.exception()
+            logger.warning(
+                "HPE API request attempt %s/%s failed with %s: %s. " "Retrying attempt %s/%s in %.2f seconds: %s %s",
+                retry_state.attempt_number,
+                self.retry_attempts,
+                type(exception).__name__ if exception is not None else "unknown exception",
+                exception,
+                next_attempt,
+                self.retry_attempts,
+                sleep_seconds,
+                method,
+                url,
+            )
+            return
+
+        response = outcome.result()
+        retry_reason = self._retry_response_reason(response) or "retryable response"
+        logger.warning(
+            "HPE API request attempt %s/%s returned %s. " "Retrying attempt %s/%s in %.2f seconds: %s %s. Body: %s",
+            retry_state.attempt_number,
+            self.retry_attempts,
+            retry_reason,
+            next_attempt,
+            self.retry_attempts,
+            sleep_seconds,
+            method,
+            url,
+            self._response_body_preview(response),
+        )
+
+    def _last_retry_result(self, retry_state: RetryCallState) -> Response:
         """Return the final response after all response-based retries fail.
 
         Args:
@@ -567,7 +754,38 @@ class HPEOAuth2Client(BaseModel):
         if outcome is None:
             raise RuntimeError("Tenacity retry loop ended without a stored outcome")
 
-        return outcome.result()
+        logger = logging.getLogger("AFIRA.HPEOAuth2Client")
+        method, url = self._retry_request_context(retry_state)
+
+        if outcome.failed:
+            exception = outcome.exception()
+            exc_info: tuple[type[BaseException], BaseException, TracebackType | None] | None = (
+                (type(exception), exception, exception.__traceback__) if exception is not None else None
+            )
+            logger.error(
+                "HPE API request failed after %s/%s attempts with %s: %s. Request: %s %s",
+                retry_state.attempt_number,
+                self.retry_attempts,
+                type(exception).__name__ if exception is not None else "unknown exception",
+                exception,
+                method,
+                url,
+                exc_info=exc_info,
+            )
+            return outcome.result()
+
+        response = outcome.result()
+        retry_reason = self._retry_response_reason(response) or "retryable response"
+        logger.error(
+            "HPE API request still returned %s after %s/%s attempts: %s %s. Body: %s",
+            retry_reason,
+            retry_state.attempt_number,
+            self.retry_attempts,
+            method,
+            url,
+            self._response_body_preview(response),
+        )
+        return response
 
     def _retrying(self) -> Retrying:
         """Build the Tenacity retry controller for authenticated requests.
@@ -575,17 +793,16 @@ class HPEOAuth2Client(BaseModel):
         Returns:
             Configured Tenacity ``Retrying`` instance using exponential backoff.
         """
-        # BUG: Retrying seems not working properly because there is no Log and the production side seems fail at first
-        # fetch error without retrying, need to investigate more
         return Retrying(
             retry=retry_if_exception_type(RequestException) | retry_if_result(self._should_retry_response),
             stop=stop_after_attempt(self.retry_attempts),
             wait=wait_exponential(min=self.retry_min_seconds, max=self.retry_max_seconds),
+            before_sleep=self._log_retry_attempt,
             retry_error_callback=self._last_retry_result,
             reraise=True,
         )
 
-    def _send_request(self, method: Literal["GET", "POST", "PUT", "DELETE"], url: str, **kwargs) -> Response:
+    def _send_request(self, method: Literal["GET", "POST", "PUT", "DELETE"], url: str, **kwargs: Any) -> Response:
         """Send one authenticated request attempt through the OAuth session.
 
         Args:
@@ -599,7 +816,12 @@ class HPEOAuth2Client(BaseModel):
         with self._lock:
             return self._oauth.request(method, url, **kwargs)
 
-    def request(self, method: Literal["GET", "POST", "PUT", "DELETE"], url: str | HttpUrl, **kwargs) -> Response:
+    def request(
+        self,
+        method: Literal["GET", "POST", "PUT", "DELETE"],
+        url: str | HttpUrl,
+        **kwargs: Any,
+    ) -> Response:
         """Send an authenticated HTTP request through the OAuth session.
 
         Args:
@@ -616,7 +838,7 @@ class HPEOAuth2Client(BaseModel):
         self.ensure_token()
         return self._retrying()(self._send_request, method, str(url), **kwargs)
 
-    def get(self, endpoint: str, **kwargs) -> Response:
+    def get(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``GET`` request.
 
         Args:
@@ -628,7 +850,7 @@ class HPEOAuth2Client(BaseModel):
         """
         return self.request("GET", self._build_url(endpoint), **kwargs)
 
-    def post(self, endpoint: str, **kwargs) -> Response:
+    def post(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``POST`` request.
 
         Args:
@@ -640,7 +862,7 @@ class HPEOAuth2Client(BaseModel):
         """
         return self.request("POST", self._build_url(endpoint), **kwargs)
 
-    def put(self, endpoint: str, **kwargs) -> Response:
+    def put(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``PUT`` request.
 
         Args:
@@ -652,7 +874,7 @@ class HPEOAuth2Client(BaseModel):
         """
         return self.request("PUT", self._build_url(endpoint), **kwargs)
 
-    def delete(self, endpoint: str, **kwargs) -> Response:
+    def delete(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``DELETE`` request.
 
         Args:

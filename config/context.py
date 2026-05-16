@@ -1,23 +1,25 @@
 """Collection of context managers for the project."""
 
 from contextlib import contextmanager
+from logging import LogRecord
 from logging.handlers import QueueListener
 from queue import Queue
-from typing import Generator, Literal
+from typing import Generator
 
 from influxdb_client.client.influxdb_client import InfluxDBClient
 from rich.console import Console
 
 from helper.logging import listener
-from models import LoggingSettings
+from models import InfluxDBSettings, LoggingSettings, LogLevel
 
 
 @contextmanager
 def logging_context(
     settings: LoggingSettings,
     console: Console,
-    log_queue: Queue,
-    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO",
+    log_queue: Queue[LogRecord],
+    level: LogLevel = "INFO",
+    influxdb_settings: InfluxDBSettings | None = None,
 ) -> Generator[QueueListener, None, None]:
     """
     Context manager for setting up and managing a logging system with queue-based handling.
@@ -31,8 +33,9 @@ def logging_context(
         console (Console): Console object for output handling (likely from rich library).
         log_queue (Queue, optional): Queue for collecting log records. Defaults to an
             unbounded Queue (maxsize=-1).
-        level (Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], optional):
-            Logging level threshold. Defaults to "INFO".
+        level (LogLevel, optional): Logging level threshold. Defaults to "INFO".
+        influxdb_settings (InfluxDBSettings | None, optional): InfluxDB settings used when
+            InfluxDB log writing is enabled.
 
     Yields:
         QueueListener: The active queue listener instance that processes log records
@@ -48,12 +51,15 @@ def logging_context(
         settings=settings,
         console=console,
         level=level,
+        influxdb_settings=influxdb_settings,
     )
     log_listener.start()
     try:
         yield log_listener
     finally:
         log_listener.stop()
+        for handler in log_listener.handlers:
+            handler.close()
 
 
 @contextmanager

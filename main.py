@@ -15,10 +15,19 @@ from rich.console import Console
 
 from config.context import logging_context
 from config.db_check import test_db_setup
+from config.runtime import initialize_environment
 from helper import logging as logging_helper
 from helper.db import retrieve_creds, store_points
 from lib.data_fetcher import device_data, site_health, wlan_data
-from lib.device_details import ap_cpu_util, ap_data, ap_mem_util, ap_power_util, switch_data, switch_hw_data
+from lib.device_details import (
+    ap_cpu_util,
+    ap_data,
+    ap_mem_util,
+    ap_power_util,
+    gateways_hw_data,
+    switch_data,
+    switch_hw_data,
+)
 from lib.sites_details import clients_data, device_locations, web_app_data, wifi_clients_loc, wlan_trhougput_trends
 from models import EnvironmentsVariables, HPEOAuth2Client
 
@@ -71,6 +80,9 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
             "switch_data": switch_data,
             "switch_hw_data": switch_hw_data,
         },
+        "GATEWAY": {
+            "gateway_data": gateways_hw_data,
+        },
     }
 
     test_db_setup(setting=env_vars.influxdb)
@@ -116,7 +128,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
                 device_type = cast(str, device.get("device_type", "unknown"))
                 if device_type not in device_details_func:
                     logger.warning(
-                        f"Device type {device_type} for device with serial number {serial_number} is not supported."
+                        f"Device type {device_type} for device with serial number {serial_number} is not supported. "
                         "Skipping device details fetchers for this device."
                     )
                     continue
@@ -141,6 +153,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
                 )
         # TODO: Add Radio Data Fetcher loop here when implemented
 
+    logger.info("Finished all fetchers. Storing points in InfluxDB...")
     _ = asyncio.run(store_points(points=res_points, influx_conf=env_vars.influxdb, debug_mode=env_vars.debug_mode))
 
     logger.debug(f"Finished all fetchers. Total points collected: {len(res_points)}")
@@ -208,15 +221,20 @@ if __name__ == "__main__":
     console: Console = Console()
     console.print("[bold green]Starting AFIRA...[/bold green]")
 
-    env_vars = EnvironmentsVariables()
+    env_vars = initialize_environment()
     shutdown_event = threading.Event()
 
     log_q: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=-1)
     # TODO: Add a healthcheck for container readiness and liveness, and add a log message when the healthcheck is ready.
 
-    with logging_context(settings=env_vars.logging, console=console, log_queue=log_q, level=env_vars.log_level):
-        # BUG: Logger is not writing a log file!
-        logging_helper.worker_logger(log_queue=log_q, **env_vars.logging.model_dump())
+    with logging_context(
+        settings=env_vars.logging,
+        console=console,
+        log_queue=log_q,
+        level=env_vars.log_level,
+        influxdb_settings=env_vars.influxdb,
+    ):
+        logging_helper.worker_logger(log_queue=log_q, log_level=env_vars.log_level)
         log = logging.getLogger("AFIRA")
         _register_shutdown_signal_handlers(shutdown_event=shutdown_event, logger=log)
         log.info("AFIRA is starting")
