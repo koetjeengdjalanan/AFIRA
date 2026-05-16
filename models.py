@@ -1,9 +1,11 @@
 """Environment variable settings."""
 
+import logging
 import threading
 import time
 from os import getenv
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Literal, Optional, cast
 
 from oauthlib.oauth2.rfc6749.clients.backend_application import BackendApplicationClient
@@ -506,7 +508,12 @@ class HPEOAuth2Client(BaseModel):
         self.ensure_token()
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         """Close the underlying OAuth session when leaving a context manager.
 
         Args:
@@ -608,15 +615,130 @@ class HPEOAuth2Client(BaseModel):
             ``True`` when the response is rate-limited, server-side, or carries
             an HPE response envelope whose status is not ``SUCCESS``.
         """
+        return cls._retry_response_reason(response) is not None
+
+    @classmethod
+    def _retry_response_reason(cls, response: Response) -> str | None:
+        """Return a human-readable retry reason for a response, if it is retryable.
+
+        Args:
+            response (Response): Response returned by the OAuth session.
+
+        Returns:
+            Retry reason text, or ``None`` when the response should not be retried.
+        """
         status_code = response.status_code
         if isinstance(status_code, int) and (status_code in {408, 409, 425, 429} or status_code >= 500):
-            return True
+            return f"HTTP {status_code}"
 
         hpe_status = cls._response_status(response)
-        return hpe_status is not None and hpe_status != "SUCCESS"
+        if hpe_status is not None and hpe_status != "SUCCESS":
+            return f"HPE response status {hpe_status}"
+
+        return None
 
     @staticmethod
-    def _last_retry_result(retry_state: RetryCallState) -> Response:
+    def _retry_request_context(retry_state: RetryCallState) -> tuple[str, str]:
+        """Return the HTTP method and URL for a retry attempt.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the active retry loop.
+
+        Returns:
+            Tuple of request method and URL when available.
+        """
+        method = str(retry_state.args[0]) if len(retry_state.args) >= 1 else "UNKNOWN"
+        url = str(retry_state.args[1]) if len(retry_state.args) >= 2 else "unknown-url"
+        return method, url
+
+    @staticmethod
+    def _retry_sleep_seconds(retry_state: RetryCallState) -> float:
+        """Return the planned sleep before the next retry attempt.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the active retry loop.
+
+        Returns:
+            Planned sleep in seconds, or ``0.0`` when Tenacity has no next action.
+        """
+        if retry_state.next_action is None:
+            return 0.0
+        return float(retry_state.next_action.sleep)
+
+    @staticmethod
+    def _response_body_preview(response: Response, max_length: int = 500) -> str:
+        """Return a single-line response body preview suitable for logs.
+
+        Args:
+            response (Response): Response returned by the OAuth session.
+            max_length (int): Maximum preview length.
+
+        Returns:
+            Response text with newlines escaped and long values truncated.
+        """
+        body = response.text.replace("\n", "\\n")
+        if len(body) <= max_length:
+            return body
+        return f"{body[:max_length]}..."
+
+    def _log_retry_attempt(self, retry_state: RetryCallState) -> None:
+        """Log why Tenacity will retry an HPE API request.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the active retry loop.
+        """
+        logger = logging.getLogger("AFIRA.HPEOAuth2Client")
+        method, url = self._retry_request_context(retry_state)
+        next_attempt = retry_state.attempt_number + 1
+        sleep_seconds = self._retry_sleep_seconds(retry_state)
+        outcome = retry_state.outcome
+
+        if outcome is None:
+            logger.warning(
+                "HPE API request attempt %s/%s failed without an outcome. "
+                "Retrying attempt %s/%s in %.2f seconds: %s %s",
+                retry_state.attempt_number,
+                self.retry_attempts,
+                next_attempt,
+                self.retry_attempts,
+                sleep_seconds,
+                method,
+                url,
+            )
+            return
+
+        if outcome.failed:
+            exception = outcome.exception()
+            logger.warning(
+                "HPE API request attempt %s/%s failed with %s: %s. " "Retrying attempt %s/%s in %.2f seconds: %s %s",
+                retry_state.attempt_number,
+                self.retry_attempts,
+                type(exception).__name__ if exception is not None else "unknown exception",
+                exception,
+                next_attempt,
+                self.retry_attempts,
+                sleep_seconds,
+                method,
+                url,
+            )
+            return
+
+        response = outcome.result()
+        retry_reason = self._retry_response_reason(response) or "retryable response"
+        logger.warning(
+            "HPE API request attempt %s/%s returned %s. " "Retrying attempt %s/%s in %.2f seconds: %s %s. Body: %s",
+            retry_state.attempt_number,
+            self.retry_attempts,
+            retry_reason,
+            next_attempt,
+            self.retry_attempts,
+            sleep_seconds,
+            method,
+            url,
+            self._response_body_preview(response),
+        )
+
+    def _last_retry_result(self, retry_state: RetryCallState) -> Response:
         """Return the final response after all response-based retries fail.
 
         Args:
@@ -632,7 +754,38 @@ class HPEOAuth2Client(BaseModel):
         if outcome is None:
             raise RuntimeError("Tenacity retry loop ended without a stored outcome")
 
-        return outcome.result()
+        logger = logging.getLogger("AFIRA.HPEOAuth2Client")
+        method, url = self._retry_request_context(retry_state)
+
+        if outcome.failed:
+            exception = outcome.exception()
+            exc_info: tuple[type[BaseException], BaseException, TracebackType | None] | None = (
+                (type(exception), exception, exception.__traceback__) if exception is not None else None
+            )
+            logger.error(
+                "HPE API request failed after %s/%s attempts with %s: %s. Request: %s %s",
+                retry_state.attempt_number,
+                self.retry_attempts,
+                type(exception).__name__ if exception is not None else "unknown exception",
+                exception,
+                method,
+                url,
+                exc_info=exc_info,
+            )
+            return outcome.result()
+
+        response = outcome.result()
+        retry_reason = self._retry_response_reason(response) or "retryable response"
+        logger.error(
+            "HPE API request still returned %s after %s/%s attempts: %s %s. Body: %s",
+            retry_reason,
+            retry_state.attempt_number,
+            self.retry_attempts,
+            method,
+            url,
+            self._response_body_preview(response),
+        )
+        return response
 
     def _retrying(self) -> Retrying:
         """Build the Tenacity retry controller for authenticated requests.
@@ -640,17 +793,16 @@ class HPEOAuth2Client(BaseModel):
         Returns:
             Configured Tenacity ``Retrying`` instance using exponential backoff.
         """
-        # BUG: Retrying seems not working properly because there is no Log and the production side seems fail at first
-        # fetch error without retrying, need to investigate more
         return Retrying(
             retry=retry_if_exception_type(RequestException) | retry_if_result(self._should_retry_response),
             stop=stop_after_attempt(self.retry_attempts),
             wait=wait_exponential(min=self.retry_min_seconds, max=self.retry_max_seconds),
+            before_sleep=self._log_retry_attempt,
             retry_error_callback=self._last_retry_result,
             reraise=True,
         )
 
-    def _send_request(self, method: Literal["GET", "POST", "PUT", "DELETE"], url: str, **kwargs) -> Response:
+    def _send_request(self, method: Literal["GET", "POST", "PUT", "DELETE"], url: str, **kwargs: Any) -> Response:
         """Send one authenticated request attempt through the OAuth session.
 
         Args:
@@ -664,7 +816,12 @@ class HPEOAuth2Client(BaseModel):
         with self._lock:
             return self._oauth.request(method, url, **kwargs)
 
-    def request(self, method: Literal["GET", "POST", "PUT", "DELETE"], url: str | HttpUrl, **kwargs) -> Response:
+    def request(
+        self,
+        method: Literal["GET", "POST", "PUT", "DELETE"],
+        url: str | HttpUrl,
+        **kwargs: Any,
+    ) -> Response:
         """Send an authenticated HTTP request through the OAuth session.
 
         Args:
@@ -681,7 +838,7 @@ class HPEOAuth2Client(BaseModel):
         self.ensure_token()
         return self._retrying()(self._send_request, method, str(url), **kwargs)
 
-    def get(self, endpoint: str, **kwargs) -> Response:
+    def get(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``GET`` request.
 
         Args:
@@ -693,7 +850,7 @@ class HPEOAuth2Client(BaseModel):
         """
         return self.request("GET", self._build_url(endpoint), **kwargs)
 
-    def post(self, endpoint: str, **kwargs) -> Response:
+    def post(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``POST`` request.
 
         Args:
@@ -705,7 +862,7 @@ class HPEOAuth2Client(BaseModel):
         """
         return self.request("POST", self._build_url(endpoint), **kwargs)
 
-    def put(self, endpoint: str, **kwargs) -> Response:
+    def put(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``PUT`` request.
 
         Args:
@@ -717,7 +874,7 @@ class HPEOAuth2Client(BaseModel):
         """
         return self.request("PUT", self._build_url(endpoint), **kwargs)
 
-    def delete(self, endpoint: str, **kwargs) -> Response:
+    def delete(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``DELETE`` request.
 
         Args:
