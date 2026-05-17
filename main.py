@@ -24,6 +24,7 @@ from lib.device_details import (
     ap_data,
     ap_mem_util,
     ap_power_util,
+    ap_radio,
     gateways_hw_data,
     switch_data,
     switch_hw_data,
@@ -75,6 +76,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
             "ap_cpu_util": ap_cpu_util,
             "ap_mem_util": ap_mem_util,
             "ap_power_util": ap_power_util,
+            "ap_radio": ap_radio,
         },
         "SWITCH": {
             "switch_data": switch_data,
@@ -151,7 +153,6 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
                     f"Device details fetcher for {serial_number} failed with error: {e}."
                     "Continuing with other devices."
                 )
-        # TODO: Add Radio Data Fetcher loop here when implemented
 
     logger.info("Finished all fetchers. Storing points in InfluxDB...")
     _ = asyncio.run(store_points(points=res_points, influx_conf=env_vars.influxdb, debug_mode=env_vars.debug_mode))

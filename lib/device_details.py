@@ -98,7 +98,7 @@ def ap_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Point]:
     data: Mapping[str, object] = _mapping_or_empty(res.json())
     point: Point = (
         Point("access_point_metrics")
-        .tag("serial_number", data.get("serialNumber", "unknown"))
+        .tag("serial_number", serial_number)
         .tag("site_id", data.get("siteId", "unknown"))
         .tag("mac_address", data.get("macAddress", "unknown"))
         .tag("device_name", data.get("deviceName", "unknown"))
@@ -342,6 +342,7 @@ def switch_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Point]:
         Missing switch attributes are tolerated and represented with default values so the point can still be written
         to InfluxDB when optional API fields are absent.
     """
+    points: list[Point] = []
     res = api_client.get(
         endpoint=f"/network-monitoring/v1/switches/{serial_number}",
         headers={"Accept": "application/json"},
@@ -386,8 +387,28 @@ def switch_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Point]:
         .field("stack_member_status", data.get("stackMemberStatus", "unknown"))
         .field("stack_member_priority", data.get("stackMemberPriority", 0))
     )
+    points.append(point)
 
-    return [point]
+    for trend in cast(list[dict], data.get("switchTrends", [])):
+        trend_data: Mapping[str, object] = _mapping_or_empty(trend)
+        point = (
+            Point("switch_metrics")
+            .tag("serial_number", serial_number)
+            .tag("device_name", data.get("deviceName", "unknown"))
+            .field("usage", trend_data.get("usage", 0))
+            .field("system_temperature", trend_data.get("systemTemperature", 0))
+            .field("memory_utilization", trend_data.get("memoryUtilization", 0))
+            .field("poe_consumption", trend_data.get("poeConsumption", 0))
+            .field("total_power_consumption", trend_data.get("totalPowerConsumption", 0))
+            .field("up_link_ports", trend_data.get("upLinkPorts", "[]"))
+            .field("cpu_utilization", trend_data.get("cpuUtilization", 0))
+            .field("power_consumption", trend_data.get("powerConsumption", 0))
+            .field("switch_role", trend_data.get("switchRole", "unknown"))
+            .field("poe_available", trend_data.get("poeAvailable", 0))
+        )
+        points.append(point)
+
+    return points
 
 
 def switch_hw_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Point]:
@@ -463,7 +484,7 @@ def switch_hw_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Poin
 
         point = (
             Point("switch_metrics")
-            .tag("serial_number", item.get("serial", "unknown"))
+            .tag("serial_number", serial_number)
             .tag("model", item.get("model", "unknown"))
             .tag("role", item.get("role", "unknown"))
             .field("cpu_health", cpu.get("health", "unknown"))
@@ -516,7 +537,7 @@ def gateways_hw_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Po
 
     point = (
         Point("gateway_metrics")
-        .tag("serial_number", data.get("serialNumber", "unknown"))
+        .tag("serial_number", serial_number)
         .tag("site_id", data.get("siteId", "unknown"))
         .tag("site_name", data.get("siteName", "unknown"))
         .tag("device_name", data.get("deviceName", "unknown"))
@@ -539,3 +560,74 @@ def gateways_hw_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Po
     )
 
     return [point]
+
+
+def ap_radio(api_client: HPEOAuth2Client, serial_number: str) -> list[Point]:
+    """
+    Retrieve radio metrics for a given access point and convert each radio entry into an InfluxDB Point.
+
+    Parameters:
+        api_client : HPEOAuth2Client
+            Authenticated client used to call the HPE network-monitoring API.
+        serial_number : str
+            Serial number of the access point whose radio data will be fetched.
+
+    Returns:
+        list[Point]
+            A list of Point objects with measurement name "radio_metrics". Each Point contains tags
+            (e.g. serial_number, device_name, mac_address, site_id, band, mode, radio_number, radio_id)
+            and fields for radio metrics (e.g. health, status, band_range, channel, bandwidth, power,
+            channel_utilization, non_wifi_interference, tx_utilization, rx_utilization, noise_floor,
+            errors, drops, retries, channel_quality, channel_change_count, power_change_count).
+
+    Raises:
+        ConnectionError
+            If the API response is not successful, contains no JSON body, or returns an empty list.
+
+    Notes:
+        - The function expects the endpoint "/network-monitoring/v1/aps/{serial_number}/radios" to
+        return a JSON array of radio objects. Missing or absent attributes are defaulted as in the
+        implementation (using dict.get).
+    """
+    points: list[Point] = []
+    res = api_client.get(
+        endpoint=f"/network-monitoring/v1/aps/{serial_number}/radios",
+        headers={"Accept": "application/json"},
+    )
+
+    if not res.ok or not res.json() or len(res.json().get("items", [])) < 1:
+        raise ConnectionError(
+            f"[radio_data] - unexpected response for ap serial number {serial_number}. Response: {res.text}", res.url
+        )
+
+    for radio in res.json().get("items", []):
+        point = (
+            Point("radio_metrics")
+            .tag("serial_number", serial_number)
+            .tag("mac_address", radio.get("macAddress", "unknown"))
+            .tag("site_id", radio.get("siteId", "unknown"))
+            .tag("band", radio.get("band", "unknown"))
+            .tag("mode", radio.get("mode", "unknown"))
+            .tag("radio_number", radio.get("radioNumber", -1))
+            .tag("radio_id", radio.get("id", "unknown"))
+            .field("health", radio.get("health", "unknown"))
+            .field("status", radio.get("status", "unknown"))
+            .field("band_range", radio.get("bandRange", "unknown"))
+            .field("channel", radio.get("channel", "unknown"))
+            .field("bandwidth", radio.get("bandwidth", "unknown"))
+            .field("power", radio.get("power", 0))
+            .field("channel_utilization", radio.get("channelUtilization", 0))
+            .field("non_wifi_interference", radio.get("nonWifiInterference", 0))
+            .field("tx_utilization", radio.get("txUtilization", 0))
+            .field("rx_utilization", radio.get("rxUtilization", 0))
+            .field("noise_floor", radio.get("noiseFloor", 0))
+            .field("errors", radio.get("errors", 0))
+            .field("drops", float(radio.get("drops", 0)))
+            .field("retries", radio.get("retries", 0))
+            .field("channel_quality", radio.get("channelQuality", 0))
+            .field("channel_change_count", radio.get("channelChangeCount", 0))
+            .field("power_change_count", radio.get("powerChangeCount", 0))
+        )
+        points.append(point)
+
+    return points
