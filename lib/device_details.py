@@ -26,6 +26,17 @@ def _int_or_default(value: object, default: int = 0) -> int:
         return default
 
 
+def _float_or_default(value: object, default: float = 0.0) -> float:
+    """Convert API float values to float, failing back when they are missing or malformed."""
+    if not isinstance(value, int | float | str | bytes | bytearray):
+        return default
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _first_number_or_default(value: object, default: float = 0.0) -> float:
     """Read the first value from an API sample list and convert it to float."""
     if not isinstance(value, list) or len(value) == 0:
@@ -395,16 +406,16 @@ def switch_data(api_client: HPEOAuth2Client, serial_number: str) -> list[Point]:
             Point("switch_metrics")
             .tag("serial_number", serial_number)
             .tag("device_name", data.get("deviceName", "unknown"))
-            .field("usage", trend_data.get("usage", 0))
-            .field("system_temperature", trend_data.get("systemTemperature", 0))
-            .field("memory_utilization", trend_data.get("memoryUtilization", 0))
-            .field("poe_consumption", trend_data.get("poeConsumption", 0))
-            .field("total_power_consumption", trend_data.get("totalPowerConsumption", 0))
+            .field("usage", _float_or_default(trend_data.get("usage")))
+            .field("system_temperature", _float_or_default(trend_data.get("systemTemperature")))
+            .field("memory_utilization", _float_or_default(trend_data.get("memoryUtilization")))
+            .field("poe_consumption", _float_or_default(trend_data.get("poeConsumption")))
+            .field("total_power_consumption", _float_or_default(trend_data.get("totalPowerConsumption")))
             .field("up_link_ports", trend_data.get("upLinkPorts", "[]"))
-            .field("cpu_utilization", trend_data.get("cpuUtilization", 0))
-            .field("power_consumption", trend_data.get("powerConsumption", 0))
+            .field("cpu_utilization", _float_or_default(trend_data.get("cpuUtilization")))
+            .field("power_consumption", _float_or_default(trend_data.get("powerConsumption")))
             .field("switch_role", trend_data.get("switchRole", "unknown"))
-            .field("poe_available", trend_data.get("poeAvailable", 0))
+            .field("poe_available", _float_or_default(trend_data.get("poeAvailable")))
         )
         points.append(point)
 
