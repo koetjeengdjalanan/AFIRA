@@ -633,7 +633,7 @@ def ap_radio(api_client: HPEOAuth2Client, serial_number: str) -> list[Point]:
             .field("rx_utilization", radio.get("rxUtilization", 0))
             .field("noise_floor", radio.get("noiseFloor", 0))
             .field("errors", radio.get("errors", 0))
-            .field("drops", _float_or_default(radio.get("drops"), 0.0))
+            .field("drops", float(radio.get("drops", 0)))
             .field("retries", radio.get("retries", 0))
             .field("channel_quality", radio.get("channelQuality", 0))
             .field("channel_change_count", radio.get("channelChangeCount", 0))
