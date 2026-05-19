@@ -340,26 +340,31 @@ def clients_data(api_client: HPEOAuth2Client, site_id: str) -> list[Point]:
         for client in res.json().get("items", []):
             point = (
                 Point(measurement_name="client_metrics")
-                .tag(key="mac_address", value=client.get("mac", "unknown"))
-                .tag(key="name", value=client.get("name", "unknown"))
-                .tag(key="type", value=client.get("type", "unknown"))
+                .tag(key="mac_address", value=client.get("macAddress", "unknown"))
+                .tag(key="name", value=client.get("userName", "unknown"))
+                .tag(key="type", value=client.get("connectedDeviceType", "unknown"))
                 .tag(key="role", value=client.get("role", "unknown"))
-                .tag(key="experience", value=client.get("experience", "unknown"))
                 .tag(key="status", value=client.get("status", "unknown"))
-                .tag(key="status_reason", value=client.get("statusReason", "unknown"))
                 .tag(
                     key="connected_device_serial",
                     value=client.get("connectedDeviceSerial", "unknown"),
                 )
                 .tag(key="connected_to", value=client.get("connectedTo", "unknown"))
-                .tag(key="network", value=client.get("network", "unknown"))
-                .tag(key="tunnel", value=client.get("tunnel", "unknown"))
+                .tag(key="tunnel", value=client.get("tunnelId", "unknown"))
                 .tag(key="key_management", value=client.get("keyManagement", "unknown"))
                 .tag(
                     key="authentication",
-                    value=client.get("authentication", "unknown"),
+                    value=client.get("authenticationType", "unknown"),
                 )
-                .tag(key="capabilities", value=client.get("capabilities", "unknown"))
+                .tag(key="capabilities", value=client.get("clientCapabilities", "unknown"))
+                .tag(key="client_function", value=client.get("clientFunction", "unknown"))
+                .tag(key="client_vendor", value=client.get("clientVendor", "unknown"))
+                .tag(key="client_manufacturer", value=client.get("clientManufacturer", "unknown"))
+                .tag(key="client_operating_system", value=client.get("clientOperatingSystem", "unknown"))
+                .tag(key="client_tags", value=client.get("clientTags", "unknown"))
+                .tag(key="client_category", value=client.get("clientCategory", "unknown"))
+                .tag(key="physical_type", value=client.get("phyType", "unknown"))
+                .field(field="hostname", value=client.get("hostName", "unknown"))
                 .field(field="ipv4", value=client.get("ipv4", "unknown"))
                 .field(field="ipv6", value=client.get("ipv6", "unknown"))
                 .field(field="port", value=client.get("port", "unknown"))
@@ -368,8 +373,10 @@ def clients_data(api_client: HPEOAuth2Client, site_id: str) -> list[Point]:
                 .field(field="last_seen_at", value=client.get("lastSeenAt", "unknown"))
                 .field(
                     field="connected_since",
-                    value=client.get("connectedSince", "unknown"),
+                    value=client.get("connectedAt", "unknown"),
                 )
+                .field(field="bssid", value=client.get("bssid", "unknown"))
+                .field(field="client_connection_type", value=client.get("clientConnectionType", "unknown"))
             )
             points.append(point)
     return points
@@ -588,5 +595,61 @@ def wlan_trhougput_trends(api_client: HPEOAuth2Client, wlan_name: str) -> list[P
                 .time(sample.get("timestamp", ""))
             )
             points.append(point)
+
+    return points
+
+
+def alerts(api_client: HPEOAuth2Client, site_id: str) -> list[Point]:
+    """
+    Retrieve alerts from the HPE Aruba API and convert them to a list of Point objects.
+
+    Parameters:
+        api_client : HPEOAuth2Client
+            Authenticated HTTP client used to query the "/network-notifications/v1/alerts" endpoint.
+        site_id : str
+            The ID of the site for which to retrieve alerts.
+
+    Returns:
+        list[Point]
+            A list of Point instances (measurement name "alerts"), one per alert item. Each Point is
+            populated with tags (e.g. type, updated_at, site_name, category, updated_by, device_type,
+            severity, priority) and fields (e.g. id, key, cleared_reason, summary, status, description).
+            The Point timestamp is taken from the alert's "createdAt" value. Missing values default to
+            the string "unknown".
+
+    Raises:
+        ValueError
+            If the HTTP request fails, the response is malformed, or contains no alert items. The
+            exception includes the status code and response text.
+    """
+    points: list[Point] = []
+    res = api_client.get("/network-notifications/v1/alerts", headers={"Accept": "application/json"})
+
+    if any([not res.ok, "items" not in res.json(), len(res.json().get("items", [])) < 1]):
+        raise ValueError(
+            "[alerts] - Failed to fetch alerts: " f"{res.status_code} - {res.text}",
+            res.url,
+        )
+
+    for alert in res.json().get("items", []):
+        point = (
+            Point(measurement_name="site_alerts")
+            .tag(key="site_id", value=site_id)
+            .tag(key="type", value=alert.get("type", "unknown"))
+            .tag(key="updated_at", value=alert.get("updatedAt", "unknown"))
+            .tag(key="site_name", value=alert.get("siteName", "unknown"))
+            .tag(key="category", value=alert.get("category", "unknown"))
+            .tag(key="updated_by", value=alert.get("updatedBy", "unknown"))
+            .tag(key="device_type", value=alert.get("deviceType", "unknown"))
+            .tag(key="severity", value=alert.get("severity", "unknown"))
+            .tag(key="priority", value=alert.get("priority", "unknown"))
+            .tag(key="type", value=alert.get("type", "unknown"))
+            .field(field="id", value=alert.get("id", "unknown"))
+            .field(field="key", value=alert.get("key", "unknown"))
+            .field(field="cleared_reason", value=alert.get("clearedReason", "unknown"))
+            .field(field="summary", value=alert.get("summary", "unknown"))
+            .field(field="status", value=alert.get("status", "unknown"))
+        ).time(alert.get("createdAt", "unknown"))
+        points.append(point)
 
     return points
