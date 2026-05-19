@@ -29,6 +29,7 @@ from lib.device_details import (
     switch_data,
     switch_hw_data,
 )
+from lib.sites_details import alerts as site_alerts
 from lib.sites_details import clients_data, device_locations, web_app_data, wifi_clients_loc, wlan_trhougput_trends
 from models import EnvironmentsVariables, HPEOAuth2Client
 
@@ -69,6 +70,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
         "wifi_clients_loc": wifi_clients_loc,
         "clients_data": clients_data,
         "web_app_data": web_app_data,
+        "alerts": site_alerts,
     }
     device_details_func: dict[str, dict[str, Callable[[HPEOAuth2Client, str], list[Point]]]] = {
         "ACCESS_POINT": {
@@ -136,7 +138,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
                     continue
                 for device_details, func in device_details_func.get(device_type, {}).items():
                     logger.info(
-                        f"Running device details fetcher {device_details}"
+                        f"Running device details fetcher {device_details} "
                         f"for device with serial number: {serial_number}"
                     )
                     points = func(aruba_api, serial_number)
@@ -150,7 +152,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
                     )
             except Exception as e:
                 logger.warning(
-                    f"Device details fetcher for {serial_number} failed with error: {e}."
+                    f"Device details fetcher for {serial_number} failed with error: {e}. "
                     "Continuing with other devices."
                 )
 
@@ -239,6 +241,13 @@ if __name__ == "__main__":
         log = logging.getLogger("AFIRA")
         _register_shutdown_signal_handlers(shutdown_event=shutdown_event, logger=log)
         log.info("AFIRA is starting")
+        try:
+            run_forever(env_vars=env_vars, shutdown_event=shutdown_event)
+        except Exception as e:
+            log.critical(msg=f"AFIRA encountered a critical error: {e}", exc_info=True, stack_info=True)
+            raise SystemExit(1) from e
+        finally:
+            log.info("AFIRA shutdown complete.")
         try:
             run_forever(env_vars=env_vars, shutdown_event=shutdown_event)
         except Exception as e:
