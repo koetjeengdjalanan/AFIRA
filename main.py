@@ -30,7 +30,7 @@ from lib.device_details import (
     switch_hw_data,
 )
 from lib.sites_details import clients_data, device_locations, web_app_data, wifi_clients_loc, wlan_trhougput_trends
-from models import EnvironmentsVariables, HPEOAuth2Client
+from models import EnvironmentsVariables, FortigateClient, HPEOAuth2Client
 
 FetcherItems = list[str] | list[dict[str, Any]]
 FetcherResult = tuple[FetcherItems, list[Point]]
@@ -52,6 +52,10 @@ def _require_fetcher_result(fetcher: str, result: FetcherReturn) -> FetcherResul
 
     return fetcher_items, fetcher_points
 
+
+def _run_fortigate_fetcher(fortigate_api: FortigateClient, credentials: dict[str, Any], logger: logging.Logger) -> list[Point]:
+    """Run the Fortigate fetcher and return its results."""
+    pass
 
 def run_once(env_vars: EnvironmentsVariables) -> int:
     """Run one AFIRA collection cycle and return the number of collected points."""
