@@ -29,6 +29,7 @@ from lib.device_details import (
     switch_data,
     switch_hw_data,
 )
+from lib.fortigate.config_fetcher import ha_checksum, system_interface, vdoms
 from lib.sites_details import clients_data, device_locations, web_app_data, wifi_clients_loc, wlan_trhougput_trends
 from models import EnvironmentsVariables, FortigateClient, HPEOAuth2Client
 
@@ -53,9 +54,44 @@ def _require_fetcher_result(fetcher: str, result: FetcherReturn) -> FetcherResul
     return fetcher_items, fetcher_points
 
 
-def _run_fortigate_fetcher(fortigate_api: FortigateClient, credentials: dict[str, Any], logger: logging.Logger) -> list[Point]:
-    """Run the Fortigate fetcher and return its results."""
-    pass
+def _run_fortigate_fetcher(credentials: dict[str, Any], logger: logging.Logger) -> list[Point]:
+    """
+    Run the Fortigate fetcher and return its results.
+    
+    Args:
+        credentials (dict[str, Any]): A dictionary containing the credentials for the Fortigate API.
+        logger (logging.Logger): A logger instance for logging.
+    
+    Returns:
+        list[Point]: A list of InfluxDB points collected from the Fortigate API.
+    """
+    with FortigateClient(**credentials["fortigate"]) as api_client:
+        logger.debug("Successfully authenticated with Fortigate API.")
+        points: list[Point] = []
+        
+        # Fetch static data
+        vdoms_list = vdoms(api_client=api_client)
+        ha_members, ha_sync_state = ha_checksum(api_client=api_client)
+        points.extend(ha_sync_state)
+        interfaces, interface_status = system_interface(api_client=api_client)
+        points.extend(interface_status)
+        
+        for vdom in vdoms_list:
+            pass
+        
+        for member in ha_members:
+            serial_no = member.get("serial_no", "unknown")
+            member_vdoms = member.get("vdoms", [])
+            for vdom in member_vdoms:
+                pass
+        
+        for interface in interfaces:
+            interface_name = interface.get("name", "unknown")
+            interface_vdom = interface.get("vdom", "unknown")
+            pass
+    
+    return points
+    
 
 def run_once(env_vars: EnvironmentsVariables) -> int:
     """Run one AFIRA collection cycle and return the number of collected points."""
