@@ -29,7 +29,18 @@ from lib.device_details import (
     switch_data,
     switch_hw_data,
 )
-from lib.fortigate.config_fetcher import ha_checksum, system_interface, vdoms
+from lib.fortigate.config_fetcher import (
+    firewall_traffic_shapper,
+    fortiview_realtime_statistics,
+    ha_checksum,
+    license_status,
+    router_ipv4,
+    sdwan_health_check,
+    system_interface,
+    system_resource_usage,
+    vdoms,
+    vwan_health_check,
+)
 from lib.sites_details import clients_data, device_locations, web_app_data, wifi_clients_loc, wlan_trhougput_trends
 from models import EnvironmentsVariables, FortigateClient, HPEOAuth2Client
 
@@ -75,20 +86,141 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], logger: logging.Logger) 
         points.extend(ha_sync_state)
         interfaces, interface_status = system_interface(api_client=api_client)
         points.extend(interface_status)
-        
+        # Fetch per-VDOM data
+        logger.debug("Start VDOM-specific fetchers loop")
         for vdom in vdoms_list:
-            pass
-        
-        for member in ha_members:
-            serial_no = member.get("serial_no", "unknown")
-            member_vdoms = member.get("vdoms", [])
-            for vdom in member_vdoms:
-                pass
-        
-        for interface in interfaces:
-            interface_name = interface.get("name", "unknown")
-            interface_vdom = interface.get("vdom", "unknown")
-            pass
+            # Firewall Traffic Shaper
+            try:
+                logger.info(f"Running firewall traffic shaper fetcher for VDOM: {vdom}")
+                _, traffic_shapper_points = firewall_traffic_shapper(
+                    api_client=api_client,
+                    vdom=vdom,
+                )
+                points.extend(traffic_shapper_points)
+                logger.debug(
+                    "Firewall traffic shaper fetcher for VDOM %s returned %s points",
+                    vdom,
+                    len(traffic_shapper_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Firewall traffic shaper fetcher for VDOM {vdom} failed with error: {e}. "
+                    "Continuing with other VDOMs."
+                )
+            
+            # SD-WAN Health Check
+            try:
+                logger.info(f"Running SD-WAN health check fetcher for VDOM: {vdom}")
+                _, sdwan_points = sdwan_health_check(
+                    api_client=api_client,
+                    vdom=vdom,
+                )
+                points.extend(sdwan_points)
+                logger.debug(
+                    "SD-WAN health check fetcher for VDOM %s returned %s points",
+                    vdom,
+                    len(sdwan_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"SD-WAN health check fetcher for VDOM {vdom} failed with error: {e}. "
+                    "Continuing with other VDOMs."
+                )
+            
+            # Virtual WAN Health Check
+            try:
+                logger.info(f"Running virtual WAN health check fetcher for VDOM: {vdom}")
+                _, vwan_points = vwan_health_check(
+                    api_client=api_client,
+                    vdom=vdom,
+                )
+                points.extend(vwan_points)
+                logger.debug(
+                    "Virtual WAN health check fetcher for VDOM %s returned %s points",
+                    vdom,
+                    len(vwan_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Virtual WAN health check fetcher for VDOM {vdom} failed with error: {e}. "
+                    "Continuing with other VDOMs."
+                )
+            
+            # License Status
+            try:
+                logger.info(f"Running license status fetcher for VDOM: {vdom}")
+                _, license_points = license_status(
+                    api_client=api_client,
+                    vdom=vdom,
+                )
+                points.extend(license_points)
+                logger.debug(
+                    "License status fetcher for VDOM %s returned %s points",
+                    vdom,
+                    len(license_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"License status fetcher for VDOM {vdom} failed with error: {e}. "
+                    "Continuing with other VDOMs."
+                )
+            
+            # FortiView Realtime Statistics
+            try:
+                logger.info(f"Running FortiView realtime statistics fetcher for VDOM: {vdom}")
+                _, fortiview_points = fortiview_realtime_statistics(
+                    api_client=api_client,
+                    vdom=vdom,
+                )
+                points.extend(fortiview_points)
+                logger.debug(
+                    "FortiView realtime statistics fetcher for VDOM %s returned %s points",
+                    vdom,
+                    len(fortiview_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"FortiView realtime statistics fetcher for VDOM {vdom} failed with error: {e}. "
+                    "Continuing with other VDOMs."
+                )
+            
+            # IPv4 Routing Table
+            try:
+                logger.info(f"Running IPv4 routing table fetcher for VDOM: {vdom}")
+                _, router_points = router_ipv4(
+                    api_client=api_client,
+                    vdom=vdom,
+                )
+                points.extend(router_points)
+                logger.debug(
+                    "IPv4 routing table fetcher for VDOM %s returned %s points",
+                    vdom,
+                    len(router_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"IPv4 routing table fetcher for VDOM {vdom} failed with error: {e}. "
+                    "Continuing with other VDOMs."
+                )
+            
+            # System Resource Usage
+            try:
+                logger.info(f"Running system resource usage fetcher for VDOM: {vdom}")
+                _, resource_points = system_resource_usage(
+                    api_client=api_client,
+                    vdom=vdom,
+                )
+                points.extend(resource_points)
+                logger.debug(
+                    "System resource usage fetcher for VDOM %s returned %s points",
+                    vdom,
+                    len(resource_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"System resource usage fetcher for VDOM {vdom} failed with error: {e}. "
+                    "Continuing with other VDOMs."
+                )
     
     return points
     
