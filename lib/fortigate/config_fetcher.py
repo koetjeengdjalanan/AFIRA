@@ -58,7 +58,7 @@ def system_interface(api_client: FortigateClient) -> tuple[list[dict[str, Any]],
     return interfaces, points
 
 
-def vdoms(api_client: FortigateClient) -> list[str]:
+def vdoms(api_client: FortigateClient) -> tuple[list[str], list[Point]]:
     """
     Fetches VDOM information from the Fortigate API.
 
@@ -66,9 +66,10 @@ def vdoms(api_client: FortigateClient) -> list[str]:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
         
     Returns:
-        list[str]: A list of VDOM names.
+        tuple[list[str], list[Point]]: A tuple containing a list of VDOM names and a list of InfluxDB points.
     """
     vdom_list: list[str] = []
+    vdom_history_points: list[Point] = []
     start = 0
 
     while True:
@@ -85,6 +86,13 @@ def vdoms(api_client: FortigateClient) -> list[str]:
         size = res_json.get("size", 0)
         matched_count = res_json.get("matched_count", 0)
         next_idx = res_json.get("next_idx", 0)
+        
+        point = (
+            Point("vdom_count")
+            .tag("serial_no", res_json.get("serial_no", "unknown"))
+            .field("count", len(res_json.get("results", [])))
+        )
+        vdom_history_points.append(point)
 
         for item in res_json.get("results", []):
             vdom_list.append(item.get("name", ""))
@@ -94,7 +102,7 @@ def vdoms(api_client: FortigateClient) -> list[str]:
 
         start = next_idx
 
-    return vdom_list
+    return vdom_list, vdom_history_points
 
 
 def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
@@ -172,8 +180,8 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[li
                 "q_name": item.get("q_name", ""),
                 "q_mkey_type": item.get("q_mkey_type", ""),
                 "q_no_edit": q_no_edit,
-            })
-
+            }) 
+            
             point = (
                 Point("fortigate_traffic_shaper")
                 .tag("serial_no", serial_no)
@@ -197,7 +205,7 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[li
             break
 
         start = next_idx
-
+    
     return traffic_shapers, points
 
 
