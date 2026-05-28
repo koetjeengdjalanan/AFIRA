@@ -105,7 +105,7 @@ def vdoms(api_client: FortigateClient) -> tuple[list[str], list[Point]]:
     return vdom_list, vdom_history_points
 
 
-def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> list[dict[str, str]]:
+def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches firewall traffic shaper information from the Fortigate API.
 
@@ -114,31 +114,80 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> list[dic
         vdom (str): The VDOM for which to fetch the traffic shaper information.
         
     Returns:
-        list[dict[str, str]]: A list of dictionaries containing firewall traffic shaper information.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of dictionaries with firewall traffic shaper information and a list of InfluxDB points.
     """
-    pass
+    traffic_shapers: list[dict[str, Any]] = []
+    points: list[Point] = []
+    start = 0
 
+    while True:
+        res = api_client.get(
+            "/api/v2/cmdb/firewall.shaper/traffic-shaper",
+            params={"vdom": vdom, "start": start, "count": 100},
+            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
+        )
+        res_json = res.json()
 
-def sdwan_health_check(api_client: FortigateClient, vdom: str) -> list[dict[str, str]]:
-    """
-    Fetches SD-WAN health check information from the Fortigate API.
+        if not res.ok or "results" not in res_json:
+            raise Exception(f"Failed to fetch firewall traffic shaper information: {res.text}")
 
-    Args:
-        api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
-        vdom (str): The VDOM for which to fetch the SD-WAN health check information.
-        
-    Returns:
-        list[dict[str, str]]: A list of dictionaries containing SD-WAN health check information.
-    """
-    pass
+        response_vdom = res_json.get("vdom", vdom)
+        serial_no = res_json.get("serial", "unknown")
+        size = res_json.get("size", 0)
+        matched_count = res_json.get("matched_count", 0)
+        next_idx = res_json.get("next_idx", 0)
 
+        for item in res_json.get("results", []):
+            name = item.get("name", "")
+            guaranteed_bandwidth = item.get("guaranteed-bandwidth", 0)
+            maximum_bandwidth = item.get("maximum-bandwidth", 0)
+            exceed_bandwidth = item.get("exceed-bandwidth", 0)
+            overhead = item.get("overhead", 0)
+            q_ref = item.get("q_ref", 0)
+            q_static = item.get("q_static", False)
+            q_global_entry = item.get("q_global_entry", False)
+            q_no_edit = item.get("q_no_edit", False)
+
+            traffic_shapers.append({
+                "name": name,
+                "q_origin_key": item.get("q_origin_key", ""),
+                "vdom": response_vdom,
+                "serial": serial_no,
+                "guaranteed-bandwidth": guaranteed_bandwidth,
+                "maximum-bandwidth": maximum_bandwidth,
+                "bandwidth-unit": item.get("bandwidth-unit", ""),
+                "priority": item.get("priority", ""),
+                "per-policy": item.get("per-policy", ""),
+                "diffserv": item.get("diffserv", ""),
+                "diffservcode": item.get("diffservcode", ""),
+                "dscp-marking-method": item.get("dscp-marking-method", ""),
+                "exceed-bandwidth": exceed_bandwidth,
+                "exceed-dscp": item.get("exceed-dscp", ""),
+                "maximum-dscp": item.get("maximum-dscp", ""),
+                "cos-marking": item.get("cos-marking", ""),
+                "cos-marking-method": item.get("cos-marking-method", ""),
+                "cos": item.get("cos", ""),
+                "exceed-cos": item.get("exceed-cos", ""),
+                "maximum-cos": item.get("maximum-cos", ""),
+                "overhead": overhead,
+                "exceed-class-id": item.get("exceed-class-id", 0),
+                "q_ref": q_ref,
+                "q_static": q_static,
+                "q_no_rename": item.get("q_no_rename", False),
+                "q_global_entry": q_global_entry,
+                "q_type": item.get("q_type", 0),
+                "q_path": item.get("q_path", ""),
+                "q_name": item.get("q_name", ""),
+                "q_mkey_type": item.get("q_mkey_type", ""),
+                "q_no_edit": q_no_edit,
+            })
 
 def firmware(api_client: FortigateClient) -> tuple[dict[str, dict[str|int|bool]|list[dict[str, str|int]]], list[Point], list[Point]]:
     """
     Fetches firmware information from the Fortigate API.
 
-    Args:
-        api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
+        if len(traffic_shapers) >= size or matched_count == 0:
+            break
 
     Returns:
         dict[str, dict[str|int|bool]|list[dict[str, str|int]]]: A dictionary containing firmware information.
@@ -181,82 +230,171 @@ def firmware(api_client: FortigateClient) -> tuple[dict[str, dict[str|int|bool]|
 
     return firmware_info, firmware_update_available_points, update_history_firmware_points
 
+    return traffic_shapers, points
 
-def ha_checksum(api_client: FortigateClient) -> tuple[list[dict[str, list[str]]], list[Point]]:
+
+def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
     """
-    Fetches HA checksum information from the Fortigate API.
+    Fetches SD-WAN health check information from the Fortigate API.
 
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
-
+        vdom (str): The VDOM for which to fetch the SD-WAN health check information.
+        
     Returns:
-        tuple[list[dict[str, list[str]]], list[Point]]: A tuple containing:
-            - A list of dicts with {"serial_no": ..., "vdoms": ...} for each HA member.
-            - A list of InfluxDB Points indicating sync/desync state per HA member.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of dictionaries with SD-WAN health check information and a list of InfluxDB points.
     """
-    res = api_client.get(
-        "/api/v2/monitor/system/ha-checksums",
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
-    )
-    res_json = res.json()
-
-    if not res.ok or "results" not in res_json:
-        raise Exception(f"Failed to fetch HA checksum information: {res.text}")
-
-    results = res_json.get("results", [])
-
-    # Use the primary's checksum as the source of truth
-    primary_checksum = next(
-        (item.get("checksum", {}).get("all", "") for item in results if item.get("is_manage_primary", False)),
-        ""
-    )
-
-    ha_members: list[dict[str, list[str]]] = []
+    health_checks: list[dict[str, Any]] = []
     points: list[Point] = []
+    start = 0
 
-    for item in results:
-        serial_no = item.get("serial_no", "unknown")
-        is_primary = item.get("is_manage_primary", False)
-        member_checksum = item.get("checksum", {}).get("all", "")
-        vdoms = item.get("checksum", {}).get("vdoms", {}).keys() if "checksum" in item and "vdoms" in item["checksum"] else []
-
-        # Primary is always considered synced; secondary is synced if its checksum matches primary
-        is_synced = is_primary or (member_checksum == primary_checksum and primary_checksum != "")
-
-        ha_members.append({
-            "serial_no": serial_no,
-            "vdoms": list(vdoms),
-        })
-
-        point = (
-            Point("ha_sync_state")
-            .tag("serial_no", serial_no)
-            .tag("role", "primary" if is_primary else "secondary")
-            .field("is_synced", 1 if is_synced else 0)
+    while True:
+        res = api_client.get(
+            "/api/v2/cmdb/system/sdwan/health-check",
+            params={"vdom": vdom, "start": start, "count": 100},
+            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
-        points.append(point)
+        res_json = res.json()
 
-    return ha_members, points
+        if not res.ok or "results" not in res_json:
+            raise Exception(f"Failed to fetch SD-WAN health check information: {res.text}")
 
+        response_vdom = res_json.get("vdom", vdom)
+        serial_no = res_json.get("serial", "unknown")
+        size = res_json.get("size", 0)
+        matched_count = res_json.get("matched_count", 0)
+        next_idx = res_json.get("next_idx", 0)
 
-def log_device_state(api_client: FortigateClient) -> dict[str, str|bool|dict[str, int|bool]]:
-    """
-    Fetches log device state information from the Fortigate API.
+        for item in res_json.get("results", []):
+            name = item.get("name", "")
+            server = item.get("server", "")
+            protocol = item.get("protocol", "")
+            port = item.get("port", 0)
+            packet_size = item.get("packet-size", 0)
+            ha_priority = item.get("ha-priority", 0)
+            interval = item.get("interval", 0)
+            probe_timeout = item.get("probe-timeout", 0)
+            failtime = item.get("failtime", 0)
+            recoverytime = item.get("recoverytime", 0)
+            probe_count = item.get("probe-count", 0)
+            sla_fail_log_period = item.get("sla-fail-log-period", 0)
+            sla_pass_log_period = item.get("sla-pass-log-period", 0)
+            warning_packetloss = item.get("threshold-warning-packetloss", 0)
+            alert_packetloss = item.get("threshold-alert-packetloss", 0)
+            warning_latency = item.get("threshold-warning-latency", 0)
+            alert_latency = item.get("threshold-alert-latency", 0)
+            warning_jitter = item.get("threshold-warning-jitter", 0)
+            alert_jitter = item.get("threshold-alert-jitter", 0)
+            vrf = item.get("vrf", 0)
+            class_id = item.get("class-id", 0)
+            members = item.get("members", [])
+            sla_entries = item.get("sla", [])
 
-    Args:
-        api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
-    
-    Returns:
-        dict[str, str|bool|dict[str, int|bool]]: A dictionary containing log device state information.
-    """
-    pass
+            health_checks.append({
+                "name": name,
+                "q_origin_key": item.get("q_origin_key", ""),
+                "vdom": response_vdom,
+                "serial": serial_no,
+                "probe-packets": item.get("probe-packets", ""),
+                "addr-mode": item.get("addr-mode", ""),
+                "system-dns": item.get("system-dns", ""),
+                "server": server,
+                "detect-mode": item.get("detect-mode", ""),
+                "protocol": protocol,
+                "port": port,
+                "quality-measured-method": item.get("quality-measured-method", ""),
+                "security-mode": item.get("security-mode", ""),
+                "user": item.get("user", ""),
+                "password": item.get("password", ""),
+                "packet-size": packet_size,
+                "ha-priority": ha_priority,
+                "ftp-mode": item.get("ftp-mode", ""),
+                "ftp-file": item.get("ftp-file", ""),
+                "http-get": item.get("http-get", ""),
+                "http-agent": item.get("http-agent", ""),
+                "http-match": item.get("http-match", ""),
+                "dns-request-domain": item.get("dns-request-domain", ""),
+                "dns-match-ip": item.get("dns-match-ip", ""),
+                "interval": interval,
+                "probe-timeout": probe_timeout,
+                "failtime": failtime,
+                "recoverytime": recoverytime,
+                "probe-count": probe_count,
+                "diffservcode": item.get("diffservcode", ""),
+                "update-cascade-interface": item.get("update-cascade-interface", ""),
+                "update-static-route": item.get("update-static-route", ""),
+                "embed-measured-health": item.get("embed-measured-health", ""),
+                "sla-id-redistribute": item.get("sla-id-redistribute", 0),
+                "sla-fail-log-period": sla_fail_log_period,
+                "sla-pass-log-period": sla_pass_log_period,
+                "threshold-warning-packetloss": warning_packetloss,
+                "threshold-alert-packetloss": alert_packetloss,
+                "threshold-warning-latency": warning_latency,
+                "threshold-alert-latency": alert_latency,
+                "threshold-warning-jitter": warning_jitter,
+                "threshold-alert-jitter": alert_jitter,
+                "vrf": vrf,
+                "source": item.get("source", ""),
+                "source6": item.get("source6", ""),
+                "members": members,
+                "mos-codec": item.get("mos-codec", ""),
+                "class-id": class_id,
+                "sla": sla_entries,
+            })
 
+            point = (
+                Point("fortigate_sdwan_health_check")
+                .tag("serial_no", serial_no)
+                .tag("vdom", response_vdom)
+                .tag("health_check_name", name or "unknown")
+                .tag("server", server or "unknown")
+                .tag("protocol", protocol or "unknown")
+                .tag("detect_mode", item.get("detect-mode", "unknown"))
+                .tag("quality_measured_method", item.get("quality-measured-method", "unknown"))
+                .field("port", port)
+                .field("packet_size", packet_size)
+                .field("ha_priority", ha_priority)
+                .field("interval", interval)
+                .field("probe_timeout", probe_timeout)
+                .field("failtime", failtime)
+                .field("recoverytime", recoverytime)
+                .field("probe_count", probe_count)
+                .field("sla_fail_log_period", sla_fail_log_period)
+                .field("sla_pass_log_period", sla_pass_log_period)
+                .field("threshold_warning_packetloss", warning_packetloss)
+                .field("threshold_alert_packetloss", alert_packetloss)
+                .field("threshold_warning_latency", warning_latency)
+                .field("threshold_alert_latency", alert_latency)
+                .field("threshold_warning_jitter", warning_jitter)
+                .field("threshold_alert_jitter", alert_jitter)
+                .field("vrf", vrf)
+                .field("class_id", class_id)
+                .field("member_count", len(members))
+                .field("sla_count", len(sla_entries))
+            )
+            points.append(point)
 
-def cooperative_security_fabric(api_client: FortigateClient):
-    """
-    Fetches cooperative security fabric information from the Fortigate API.
+            for sla in sla_entries:
+                sla_id = sla.get("id", 0)
+                sla_point = (
+                    Point("fortigate_sdwan_health_check_sla")
+                    .tag("serial_no", serial_no)
+                    .tag("vdom", response_vdom)
+                    .tag("health_check_name", name or "unknown")
+                    .tag("sla_id", str(sla_id))
+                    .tag("link_cost_factor", sla.get("link-cost-factor", "unknown"))
+                    .field("latency_threshold", sla.get("latency-threshold", 0))
+                    .field("jitter_threshold", sla.get("jitter-threshold", 0))
+                    .field("packetloss_threshold", sla.get("packetloss-threshold", 0))
+                    .field("priority_in_sla", sla.get("priority-in-sla", 0))
+                    .field("priority_out_sla", sla.get("priority-out-sla", 0))
+                )
+                points.append(sla_point)
 
-    Args:
-        api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
-    """ 
-    pass
+        if len(health_checks) >= size or matched_count == 0:
+            break
+
+        start = next_idx
+
+    return health_checks, points
+
