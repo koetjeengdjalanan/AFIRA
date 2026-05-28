@@ -180,56 +180,32 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[li
                 "q_name": item.get("q_name", ""),
                 "q_mkey_type": item.get("q_mkey_type", ""),
                 "q_no_edit": q_no_edit,
-            })
-
-def firmware(api_client: FortigateClient) -> tuple[dict[str, dict[str|int|bool]|list[dict[str, str|int]]], list[Point], list[Point]]:
-    """
-    Fetches firmware information from the Fortigate API.
+            }) 
+            
+            point = (
+                Point("fortigate_traffic_shaper")
+                .tag("serial_no", serial_no)
+                .tag("vdom", response_vdom)
+                .tag("shaper_name", name or "unknown")
+                .tag("priority", item.get("priority", "unknown"))
+                .tag("bandwidth_unit", item.get("bandwidth-unit", "unknown"))
+                .tag("per_policy", item.get("per-policy", "unknown"))
+                .field("guaranteed_bandwidth", guaranteed_bandwidth)
+                .field("maximum_bandwidth", maximum_bandwidth)
+                .field("exceed_bandwidth", exceed_bandwidth)
+                .field("overhead", overhead)
+                .field("q_ref", q_ref)
+                .field("q_static", 1 if q_static else 0)
+                .field("q_global_entry", 1 if q_global_entry else 0)
+                .field("q_no_edit", 1 if q_no_edit else 0)
+            )
+            points.append(point)
 
         if len(traffic_shapers) >= size or matched_count == 0:
             break
 
-    Returns:
-        dict[str, dict[str|int|bool]|list[dict[str, str|int]]]: A dictionary containing firmware information.
-    """
-    res = api_client.get(
-        "/api/v2/monitor/system/firmware",
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
-    )
-    res_json = res.json()
-
-    if not res.ok or "results" not in res_json:
-        raise Exception(f"Failed to fetch firmware information: {res.text}")
-
-    # Update available matrics
-    firmware_info: dict[str, Any] = res_json.get("results", {})
-    current_firmware: dict[str, Any] = firmware_info.get("current", {})
-    available_firmware: list[dict[str, Any]] = firmware_info.get("available", [])
+        start = next_idx
     
-    last_new_version: dict[str, Any] = available_firmware[0] if available_firmware else {}
-    firmware_update_available_points: list[Point] = []
-    update_history_firmware_points: list[Point] = []
-    
-    update_history_firmware_point = (
-        Point("firmware_update_history")
-        .tag("serial_no", firmware_info.get("serial_no", "unknown"))
-        .field("current_version", current_firmware.get("version", "unknown"))
-    )
-    update_history_firmware_points.append(update_history_firmware_point)
-    
-    if current_firmware and last_new_version:
-        firmware_update_available_point = (
-            Point("firmware_update_available")
-            .tag("serial_no", firmware_info.get("serial_no", "unknown"))
-            .tag("current_version", current_firmware.get("version", "unknown"))
-            .tag("available_version", last_new_version.get("version", "unknown"))
-            .field("is_update_available", 1 if current_firmware.get("version") != last_new_version.get("version") else 0)
-            .field("release_notes", last_new_version.get("release_notes", ""))
-        )
-        firmware_update_available_points.append(firmware_update_available_point)
-
-    return firmware_info, firmware_update_available_points, update_history_firmware_points
-
     return traffic_shapers, points
 
 

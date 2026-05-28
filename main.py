@@ -34,8 +34,7 @@ from lib.fortigate.config_fetcher import (
     firewall_traffic_shapper,
     sdwan_health_check,
     system_interface,
-    vdoms,
-    firmware
+    vdoms
 )
 from lib.fortigate.metric_fetcher import (
     system_resource_usage, 
@@ -44,7 +43,7 @@ from lib.fortigate.metric_fetcher import (
     fortiview_realtime_statistics, 
     router_ipv4
 )
-from lib.fortigate.info_fetcher import ha_checksum
+from lib.fortigate.info_fetcher import ha_checksum, firmware
 from lib.sites_details import alerts as site_alerts
 from lib.sites_details import clients_data, device_locations, web_app_data, wifi_clients_loc, wlan_trhougput_trends
 from models import EnvironmentsVariables, FortigateClient, HPEOAuth2Client
@@ -262,6 +261,17 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], logger: logging.Logger) 
                     "Continuing with other VDOMs."
                 )
     
+    for member in ha_members:
+        serial_no = member.get("serial_no", "unknown")
+        member_vdoms = member.get("vdoms", [])
+        for vdom in member_vdoms:
+            pass
+    
+    for interface in interfaces:
+        interface_name = interface.get("name", "unknown")
+        interface_vdom = interface.get("vdom", "unknown")
+        pass
+    
     return points
     
 
@@ -368,6 +378,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
     #             )
     
     #TODO: Add fortigate fetcher private function
+    res_points.extend(_run_fortigate_fetcher(credentials=creds["fortigate"], logger=logger))
 
     logger.info("Finished all fetchers. Storing points in InfluxDB...")
     _ = asyncio.run(store_points(points=res_points, influx_conf=env_vars.influxdb, debug_mode=env_vars.debug_mode))
