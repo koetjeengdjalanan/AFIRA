@@ -58,7 +58,7 @@ def system_interface(api_client: FortigateClient) -> tuple[list[dict[str, Any]],
     return interfaces, points
 
 
-def vdoms(api_client: FortigateClient) -> list[str]:
+def vdoms(api_client: FortigateClient) -> tuple[list[str], list[Point]]:
     """
     Fetches VDOM information from the Fortigate API.
 
@@ -66,9 +66,10 @@ def vdoms(api_client: FortigateClient) -> list[str]:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
         
     Returns:
-        list[str]: A list of VDOM names.
+        tuple[list[str], list[Point]]: A tuple containing a list of VDOM names and a list of InfluxDB points.
     """
     vdom_list: list[str] = []
+    vdom_history_points: list[Point] = []
     start = 0
 
     while True:
@@ -85,6 +86,13 @@ def vdoms(api_client: FortigateClient) -> list[str]:
         size = res_json.get("size", 0)
         matched_count = res_json.get("matched_count", 0)
         next_idx = res_json.get("next_idx", 0)
+        
+        point = (
+            Point("vdom_count")
+            .tag("serial_no", res_json.get("serial_no", "unknown"))
+            .field("count", len(res_json.get("results", [])))
+        )
+        vdom_history_points.append(point)
 
         for item in res_json.get("results", []):
             vdom_list.append(item.get("name", ""))
@@ -94,7 +102,7 @@ def vdoms(api_client: FortigateClient) -> list[str]:
 
         start = next_idx
 
-    return vdom_list
+    return vdom_list, vdom_history_points
 
 
 def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> list[dict[str, str]]:
@@ -125,7 +133,7 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> list[dict[str,
     pass
 
 
-def firmware(api_client: FortigateClient) -> dict[str, dict[str|int|bool]|list[dict[str, str|int]]]:
+def firmware(api_client: FortigateClient) -> tuple[dict[str, dict[str|int|bool]|list[dict[str, str|int]]], list[Point], list[Point]]:
     """
     Fetches firmware information from the Fortigate API.
 
@@ -135,7 +143,43 @@ def firmware(api_client: FortigateClient) -> dict[str, dict[str|int|bool]|list[d
     Returns:
         dict[str, dict[str|int|bool]|list[dict[str, str|int]]]: A dictionary containing firmware information.
     """
-    pass
+    res = api_client.get(
+        "/api/v2/monitor/system/firmware",
+        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
+    )
+    res_json = res.json()
+
+    if not res.ok or "results" not in res_json:
+        raise Exception(f"Failed to fetch firmware information: {res.text}")
+
+    # Update available matrics
+    firmware_info: dict[str, Any] = res_json.get("results", {})
+    current_firmware: dict[str, Any] = firmware_info.get("current", {})
+    available_firmware: list[dict[str, Any]] = firmware_info.get("available", [])
+    
+    last_new_version: dict[str, Any] = available_firmware[0] if available_firmware else {}
+    firmware_update_available_points: list[Point] = []
+    update_history_firmware_points: list[Point] = []
+    
+    update_history_firmware_point = (
+        Point("firmware_update_history")
+        .tag("serial_no", firmware_info.get("serial_no", "unknown"))
+        .field("current_version", current_firmware.get("version", "unknown"))
+    )
+    update_history_firmware_points.append(update_history_firmware_point)
+    
+    if current_firmware and last_new_version:
+        firmware_update_available_point = (
+            Point("firmware_update_available")
+            .tag("serial_no", firmware_info.get("serial_no", "unknown"))
+            .tag("current_version", current_firmware.get("version", "unknown"))
+            .tag("available_version", last_new_version.get("version", "unknown"))
+            .field("is_update_available", 1 if current_firmware.get("version") != last_new_version.get("version") else 0)
+            .field("release_notes", last_new_version.get("release_notes", ""))
+        )
+        firmware_update_available_points.append(firmware_update_available_point)
+
+    return firmware_info, firmware_update_available_points, update_history_firmware_points
 
 
 def ha_checksum(api_client: FortigateClient) -> tuple[list[dict[str, list[str]]], list[Point]]:
