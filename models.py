@@ -917,6 +917,19 @@ class FortigateClient(BaseModel):
     retry_min_seconds: PositiveInt = 1
     retry_max_seconds: PositiveInt = 30
     
+    def __enter__(self) -> "FortigateClient":
+        """Return this client for context-manager use."""
+        return self
+    
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """No resources to clean up on exit."""
+        pass
+    
     def _build_url(self, endpoint: str) -> str:
         """Build an absolute API URL from the configured base URL and endpoint.
 
