@@ -11,6 +11,7 @@ from typing import Any, Callable, cast
 
 from humanize import precisedelta
 from influxdb_client.client.write.point import Point
+from lib.fortigate.log_fetcher import log_disk_event_system
 from rich.console import Console
 
 from config.context import logging_context
@@ -41,7 +42,10 @@ from lib.fortigate.metric_fetcher import (
     license_status, 
     vwan_health_check, 
     fortiview_realtime_statistics, 
-    router_ipv4
+    router_ipv4,
+    vwan_interface_log,
+    vwan_sla_logs,
+    traffic_history_interface
 )
 from lib.fortigate.info_fetcher import ha_checksum, firmware
 from lib.sites_details import alerts as site_alerts
@@ -112,18 +116,58 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
         logger.debug("Successfully authenticated with Fortigate API.")
         points: list[Point] = []
         
-        vdoms_list, vdom_history_points = vdoms(api_client=api_client)
-        points.extend(vdom_history_points)
+        try:
+            logger.info("Running VDOMs fetcher")
+            vdoms_list, vdom_history_points = vdoms(api_client=api_client)
+            points.extend(vdom_history_points)
+            logger.debug(
+                "VDOMs fetcher returned %s VDOMs and %s points", 
+                len(vdoms_list), 
+                len(vdom_history_points)
+            )
+        except Exception as e:
+            logger.error(f"VDOMs fetcher failed with error: {e}. Aborting AFIRA run.")
+            raise
         
-        ha_members, ha_sync_state = ha_checksum(api_client=api_client)
-        points.extend(ha_sync_state)
+        try:
+            logger.info("Running HA checksum fetcher")
+            ha_members, ha_sync_state = ha_checksum(api_client=api_client)
+            points.extend(ha_sync_state)
+            logger.debug(
+                "HA checksum fetcher returned %s HA members and %s points", 
+                len(ha_members), 
+                len(ha_sync_state)
+            )
+        except Exception as e:
+            logger.error(f"HA checksum fetcher failed with error: {e}. Aborting AFIRA run.")
+            raise
         
-        interfaces, interface_status = system_interface(api_client=api_client)
-        points.extend(interface_status)
+        try:
+            logger.info("Running interfaces fetcher")
+            interfaces, interface_status = system_interface(api_client=api_client)
+            points.extend(interface_status)
+            logger.debug(
+                "Interfaces fetcher returned %s interfaces and %s points",
+                len(interfaces),
+                len(interface_status),
+            )
+        except Exception as e:
+            logger.error(f"Interfaces fetcher failed with error: {e}. Aborting AFIRA run.")
+            raise
         
-        _, firmware_update_available, firmware_update_history = firmware(api_client=api_client)
-        points.extend(firmware_update_available)
-        points.extend(firmware_update_history)
+        try:
+            logger.info("Running firmware fetcher")
+            _, firmware_update_available, firmware_update_history = firmware(api_client=api_client)
+            points.extend(firmware_update_available)
+            points.extend(firmware_update_history)
+            logger.debug(
+                "Firmware fetcher returned %s points for firmware update availability and %s points for firmware update history",
+                len(firmware_update_available),
+                len(firmware_update_history),
+            )
+        except Exception as e:
+            logger.error(f"Firmware fetcher failed with error: {e}. Aborting AFIRA run.")
+            raise
         
         # Fetch per-VDOM data
         logger.debug("Start VDOM-specific fetchers loop")
@@ -260,18 +304,96 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
                     f"System resource usage fetcher for VDOM {vdom} failed with error: {e}. "
                     "Continuing with other VDOMs."
                 )
-    
-    for member in ha_members:
-        serial_no = member.get("serial_no", "unknown")
-        member_vdoms = member.get("vdoms", [])
-        for vdom in member_vdoms:
-            pass
-    
-    for interface in interfaces:
-        interface_name = interface.get("name", "unknown")
-        interface_vdom = interface.get("vdom", "unknown")
-        pass
-    
+
+            # Virtual WAN Interface Log
+            try:
+                logger.info(f"Running virtual WAN interface log fetcher for interface: {interface_name} in VDOM: {interface_vdom}")
+                _, vwan_iface_points = vwan_interface_log(
+                    api_client=api_client,
+                    vdom=vdom
+                )
+                points.extend(vwan_iface_points)
+                logger.debug(
+                    "Virtual WAN interface log fetcher for interface %s returned %s points",
+                    interface_name,
+                    len(vwan_iface_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Virtual WAN interface log fetcher for interface {interface_name} failed with error: {e}. "
+                    "Continuing with other interfaces."
+                )
+            
+            # Virtual WAN SLA Log
+            try:
+                logger.info(f"Running virtual WAN SLA log fetcher for interface: {interface_name} in VDOM: {interface_vdom}")
+                _, vwan_sla_points = vwan_sla_logs(
+                    api_client=api_client,
+                    vdom=vdom,
+                )
+                points.extend(vwan_sla_points)
+                logger.debug(
+                    "Virtual WAN SLA log fetcher for interface %s returned %s points",
+                    interface_name,
+                    len(vwan_sla_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Virtual WAN SLA log fetcher for interface {interface_name} failed with error: {e}. "
+                    "Continuing with other interfaces."
+                )
+
+        logger.debug("Start HA members loop")
+        for member in ha_members:
+            serial_no = member.get("serial_no", "unknown")
+            member_vdoms = member.get("vdoms", [])
+            
+            # Event Log Disk System
+            try:
+                _, log_points = log_disk_event_system(
+                    api_client=api_client, 
+                    serial_no=serial_no, 
+                    vdoms=member_vdoms, 
+                    interval_s=env_vars.loop_sleep_seconds
+                )
+                points.extend(log_points)
+                logger.debug(
+                    "Event log disk system fetcher for HA member with serial number %s returned %s points",
+                    serial_no,
+                    len(log_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Event log disk system fetcher for HA member with serial number {serial_no} failed with error: {e}. "
+                    "Continuing with other HA members."
+                )
+        
+        # Fetch per-interface data
+        logger.debug("Start interface-specific fetchers loop")
+        for interface in interfaces:
+            interface_name = interface.get("name", "unknown")
+            interface_vdom = interface.get("vdom", "unknown")
+
+            # Traffic History Interface
+            try:
+                logger.info(f"Running traffic history fetcher for interface: {interface_name} in VDOM: {interface_vdom}")
+                _, traffic_hist_points = traffic_history_interface(
+                    api_client=api_client,
+                    vdom=interface_vdom,
+                    interface_name=interface_name
+                )
+                points.extend(traffic_hist_points)
+                logger.debug(
+                    "Traffic history fetcher for interface %s returned %s points",
+                    interface_name,
+                    len(traffic_hist_points)
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Traffic history fetcher for interface {interface_name} failed with error: {e}. "
+                    "Continuing with other interfaces."
+                )
+                   
     return points
     
 

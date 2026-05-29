@@ -419,7 +419,6 @@ def fortiview_realtime_statistics(
     return statistics, points
 
 
-
 def router_ipv4(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches IPv4 routing table information from the Fortigate API.
@@ -498,3 +497,258 @@ def router_ipv4(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, 
 
     return routes, points
 
+
+def vwan_interface_log(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
+    """
+    Fetches virtual WAN interface log information from the Fortigate API.
+
+    Args:
+        api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
+        vdom (str): The VDOM for which to fetch virtual WAN interface logs.
+
+    Returns:
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of interface log dictionaries and a list of InfluxDB points.
+    """
+    res = api_client.get(
+        "/api/v2/monitor/virtual-wan/interface-log",
+        params={"vdom": vdom},
+        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
+    )
+    res_json = res.json()
+
+    if not res.ok or "results" not in res_json:
+        raise Exception(f"Failed to fetch virtual WAN interface log information: {res.text}")
+
+    results = res_json.get("results", [])
+    response_vdom = res_json.get("vdom", vdom)
+    serial_no = res_json.get("serial", "unknown")
+    interface_logs: list[dict[str, Any]] = []
+    points: list[Point] = []
+
+    for interface_entry in results:
+        if not isinstance(interface_entry, dict):
+            continue
+
+        interface_name = interface_entry.get("interface", "unknown")
+        logs = interface_entry.get("logs", [])
+
+        for log_index, log in enumerate(logs):
+            if not isinstance(log, dict):
+                continue
+
+            timestamp = log.get("timestamp", 0)
+            tx_bandwidth = log.get("tx_bandwidth", 0)
+            rx_bandwidth = log.get("rx_bandwidth", 0)
+            bi_bandwidth = log.get("bi_bandwidth", 0)
+            tx_bytes = log.get("tx_bytes", 0)
+            rx_bytes = log.get("rx_bytes", 0)
+            egress_queue = log.get("egress_queue", [])
+
+            interface_log = {
+                "interface": interface_name,
+                "vdom": response_vdom,
+                "serial": serial_no,
+                "timestamp": timestamp,
+                "tx_bandwidth": tx_bandwidth,
+                "rx_bandwidth": rx_bandwidth,
+                "bi_bandwidth": bi_bandwidth,
+                "tx_bytes": tx_bytes,
+                "rx_bytes": rx_bytes
+            }
+            interface_logs.append(interface_log)
+
+            point = (
+                Point("fortigate_vwan_interface_log")
+                .tag("serial_no", serial_no)
+                .tag("vdom", response_vdom)
+                .tag("interface", interface_name or "unknown")
+                .tag("log_index", str(log_index))
+                .field("tx_bandwidth", tx_bandwidth)
+                .field("rx_bandwidth", rx_bandwidth)
+                .field("bi_bandwidth", bi_bandwidth)
+                .field("tx_bytes", tx_bytes)
+                .field("rx_bytes", rx_bytes)
+                .time(timestamp)
+            )
+            points.append(point)
+
+    return interface_logs, points
+
+def vwan_sla_logs(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
+    """
+    Fetches virtual WAN SLA log information from the Fortigate API.
+
+    Args:
+        api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
+        vdom (str): The VDOM for which to fetch virtual WAN SLA logs.
+
+    Returns:
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of SLA log dictionaries and a list of InfluxDB points.
+    """
+    res = api_client.get(
+        "/api/v2/monitor/virtual-wan/sla-log",
+        params={"vdom": vdom},
+        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
+    )
+    res_json = res.json()
+
+    if not res.ok or "results" not in res_json:
+        raise Exception(f"Failed to fetch virtual WAN SLA log information: {res.text}")
+
+    results = res_json.get("results", [])
+    response_vdom = res_json.get("vdom", vdom)
+    serial_no = res_json.get("serial", "unknown")
+    sla_logs: list[dict[str, Any]] = []
+    points: list[Point] = []
+
+    for sla_entry in results:
+        if not isinstance(sla_entry, dict):
+            continue
+
+        sla_name = sla_entry.get("name", "unknown")
+        interface_name = sla_entry.get("interface", "unknown")
+        logs = sla_entry.get("logs", [])
+
+        for log_index, log in enumerate(logs):
+            if not isinstance(log, dict):
+                continue
+
+            timestamp = log.get("timestamp", 0)
+            link = log.get("link", "unknown")
+            latency = log.get("latency", 0)
+            jitter = log.get("jitter", 0)
+            packetloss = log.get("packetloss", 0)
+
+            log_record = {
+                "name": sla_name,
+                "interface": interface_name,
+                "vdom": response_vdom,
+                "serial": serial_no,
+                "timestamp": timestamp,
+                "link": link,
+                "latency": latency,
+                "jitter": jitter,
+                "packetloss": packetloss,
+            }
+            sla_logs.append(log_record)
+
+            point = (
+                Point("fortigate_vwan_sla_log")
+                .tag("serial_no", serial_no)
+                .tag("vdom", response_vdom)
+                .tag("sla_name", sla_name or "unknown")
+                .tag("interface", interface_name or "unknown")
+                .tag("link", link or "unknown")
+                .tag("log_index", str(log_index))
+                .field("latency", latency)
+                .field("jitter", jitter)
+                .field("packetloss", packetloss)
+                .time(timestamp)
+            )
+            points.append(point)
+
+    return sla_logs, points
+
+def traffic_history_interface(api_client: FortigateClient, vdom: str, interface_name: str) -> tuple[list[dict[str, Any]], list[Point]]:
+    """
+    Fetches system traffic history information for an interface from the Fortigate API.
+
+    Args:
+        api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
+        vdom (str): The VDOM for which to fetch traffic history.
+        interface_name (str): The interface name used for tagging traffic history points.
+
+    Returns:
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of traffic history dictionaries and a list of InfluxDB points.
+    """
+    res = api_client.get(
+        "/api/v2/monitor/system/traffic-history/interface",
+        params={"vdom": vdom, "interface": interface_name, "time_period": "hour"},
+        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
+    )
+    res_json = res.json()
+
+    if not res.ok or "results" not in res_json:
+        raise Exception(f"Failed to fetch traffic history: {res.text}")
+
+    results = res_json.get("results", {})
+    response_vdom = res_json.get("vdom", vdom)
+    serial_no = res_json.get("serial", "unknown")
+    traffic_history: list[dict[str, Any]] = []
+    points: list[Point] = []
+
+    # Extract last TX/RX values
+    last_tx = results.get("last_tx", 0)
+    last_rx = results.get("last_rx", 0)
+
+    # Parse TX history
+    tx_logs = results.get("tx", [])
+    for tx_index, tx_entry in enumerate(tx_logs):
+        if not isinstance(tx_entry, dict):
+            continue
+
+        utc_ms = tx_entry.get("utc_ms", 0)
+        bps = tx_entry.get("bps", 0)
+
+        traffic_record = {
+            "interface": interface_name,
+            "vdom": response_vdom,
+            "serial": serial_no,
+            "direction": "tx",
+            "utc_ms": utc_ms,
+            "bps": bps,
+        }
+        traffic_history.append(traffic_record)
+
+        point = (
+            Point("fortigate_traffic_history_tx")
+            .tag("serial_no", serial_no)
+            .tag("vdom", response_vdom)
+            .tag("interface", interface_name or "unknown")
+            .tag("direction", "tx")
+            .field("bps", bps)
+            .time(int(utc_ms * 1_000_000))  # Convert milliseconds to nanoseconds
+        )
+        points.append(point)
+
+    # Parse RX history
+    rx_logs = results.get("rx", [])
+    for rx_index, rx_entry in enumerate(rx_logs):
+        if not isinstance(rx_entry, dict):
+            continue
+
+        utc_ms = rx_entry.get("utc_ms", 0)
+        bps = rx_entry.get("bps", 0)
+        traffic_record = {
+            "interface": interface_name,
+            "vdom": response_vdom,
+            "serial": serial_no,
+            "direction": "rx",
+            "utc_ms": utc_ms,
+            "bps": bps,
+        }
+        traffic_history.append(traffic_record)
+
+        point = (
+            Point("fortigate_traffic_history_rx")
+            .tag("serial_no", serial_no)
+            .tag("vdom", response_vdom)
+            .tag("interface", interface_name or "unknown")
+            .tag("direction", "rx")
+            .field("bps", bps)
+            .time(int(utc_ms * 1_000_000))  # Convert milliseconds to nanoseconds
+        )
+        points.append(point)
+
+    # Add summary point with last TX/RX values
+    summary_point = (
+        Point("fortigate_traffic_history_summary")
+        .tag("serial_no", serial_no)
+        .tag("vdom", response_vdom)
+        .tag("interface", interface_name or "unknown")
+        .field("last_tx_bps", last_tx)
+        .field("last_rx_bps", last_rx)
+    )
+    points.append(summary_point)
+
+    return traffic_history, points
