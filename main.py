@@ -69,7 +69,7 @@ def _require_fetcher_result(fetcher: str, result: FetcherReturn) -> FetcherResul
     return fetcher_items, fetcher_points
 
 
-def _run_fortigate_fetcher(credentials: dict[str, Any], logger: logging.Logger) -> list[Point]:
+def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVariables, logger: logging.Logger) -> list[Point]:
     """
     Run the Fortigate fetcher and return its results.
     
@@ -378,7 +378,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
     #             )
     
     #TODO: Add fortigate fetcher private function
-    res_points.extend(_run_fortigate_fetcher(credentials=creds["fortigate"], logger=logger))
+    res_points.extend(_run_fortigate_fetcher(credentials=creds, env_vars=env_vars, logger=logger))
 
     logger.info("Finished all fetchers. Storing points in InfluxDB...")
     _ = asyncio.run(store_points(points=res_points, influx_conf=env_vars.influxdb, debug_mode=env_vars.debug_mode))
