@@ -307,39 +307,39 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
 
             # Virtual WAN Interface Log
             try:
-                logger.info(f"Running virtual WAN interface log fetcher for interface: {interface_name} in VDOM: {interface_vdom}")
+                logger.info(f"Running virtual WAN interface log fetcher for  VDOM: {vdom}")
                 _, vwan_iface_points = vwan_interface_log(
                     api_client=api_client,
                     vdom=vdom
                 )
                 points.extend(vwan_iface_points)
                 logger.debug(
-                    "Virtual WAN interface log fetcher for interface %s returned %s points",
-                    interface_name,
+                    "Virtual WAN interface log fetcher for  VDOM: %s returned %s points",
+                    vdom,
                     len(vwan_iface_points),
                 )
             except Exception as e:
                 logger.warning(
-                    f"Virtual WAN interface log fetcher for interface {interface_name} failed with error: {e}. "
+                    f"Virtual WAN interface log fetcher for  VDOM: {vdom} failed with error: {e}. "
                     "Continuing with other interfaces."
                 )
             
             # Virtual WAN SLA Log
             try:
-                logger.info(f"Running virtual WAN SLA log fetcher for interface: {interface_name} in VDOM: {interface_vdom}")
+                logger.info(f"Running virtual WAN SLA log fetcher for  VDOM: {vdom}")
                 _, vwan_sla_points = vwan_sla_logs(
                     api_client=api_client,
                     vdom=vdom,
                 )
                 points.extend(vwan_sla_points)
                 logger.debug(
-                    "Virtual WAN SLA log fetcher for interface %s returned %s points",
-                    interface_name,
+                    "Virtual WAN SLA log fetcher for  VDOM: %s returned %s points",
+                    vdom,
                     len(vwan_sla_points),
                 )
             except Exception as e:
                 logger.warning(
-                    f"Virtual WAN SLA log fetcher for interface {interface_name} failed with error: {e}. "
+                    f"Virtual WAN SLA log fetcher for  VDOM: {vdom} failed with error: {e}. "
                     "Continuing with other interfaces."
                 )
 
