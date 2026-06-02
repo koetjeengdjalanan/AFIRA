@@ -348,32 +348,50 @@ def fortiview_realtime_statistics(
         rx_packets = detail.get("rx_packets", 0)
         tx_shaper_drops = detail.get("tx_shaper_drops", 0)
         rx_shaper_drops = detail.get("rx_shaper_drops", 0)
-        
-        # convert to kilobits per second (kbps) if the value is in bits per second (bps)
-        tx_bandwidth = detail.get("tx_bandwidth", 0) 
-        rx_bandwidth = detail.get("rx_bandwidth", 0)
 
-        statistics.append({
-            "detail_index": detail_index,
-            "vdom": response_vdom,
-            "serial": serial_no,
-            "sessions": sessions,
-            "policy_ipver": policy_ipver,
-            "dst_port": dst_port,
-            "protocol": protocol,
-            "srcintf": srcintf,
-            "dstintf": dstintf,
-            "apps": apps,
-            "shaper": shaper,
-            "sentbyte": sentbyte,
-            "rcvdbyte": rcvdbyte,
-            "tx_packets": tx_packets,
-            "rx_packets": rx_packets,
-            "tx_shaper_drops": tx_shaper_drops,
-            "rx_shaper_drops": rx_shaper_drops,
-            "tx_bandwidth": tx_bandwidth,
-            "rx_bandwidth": rx_bandwidth,
-        })
+        # convert to kilobits per second (kbps) if the value is in bits per second (bps)
+        tx_bandwidth_bps = detail.get("tx_bandwidth", 0)
+        tx_bandwidth_kbps = tx_bandwidth_bps / 1000 if tx_bandwidth_bps > 1000 else tx_bandwidth_bps
+        rx_bandwidth_bps = detail.get("rx_bandwidth", 0)
+        rx_bandwidth_kbps = rx_bandwidth_bps / 1000 if rx_bandwidth_bps > 1000 else rx_bandwidth_bps
+
+        # Calculate total bandwidth, maximum bandwidth, and bandwidth utilization, and check if bandwidth is exceeded
+        total_bandwidth_kbps = tx_bandwidth_kbps + rx_bandwidth_kbps
+        maximum_bandwidth_kbps = list_of_maximum_bandwith.get(shaper, 0)
+        bandwidth_utilization_percent = (
+            (total_bandwidth_kbps / maximum_bandwidth_kbps * 100) if maximum_bandwidth_kbps else 0
+        )
+        is_bandwidth_exceeded = int(total_bandwidth_kbps > maximum_bandwidth_kbps) if maximum_bandwidth_kbps else 0
+        exceed_bandwidth_kbps = total_bandwidth_kbps - maximum_bandwidth_kbps if is_bandwidth_exceeded else 0
+
+        statistics.append(
+            {
+                "detail_index": detail_index,
+                "vdom": response_vdom,
+                "serial": serial_no,
+                "sessions": sessions,
+                "policy_ipver": policy_ipver,
+                "dst_port": dst_port,
+                "protocol": protocol,
+                "srcintf": srcintf,
+                "dstintf": dstintf,
+                "apps": apps,
+                "shaper": shaper,
+                "sentbyte": sentbyte,
+                "rcvdbyte": rcvdbyte,
+                "tx_packets": tx_packets,
+                "rx_packets": rx_packets,
+                "tx_shaper_drops": tx_shaper_drops,
+                "rx_shaper_drops": rx_shaper_drops,
+                "tx_bandwidth": tx_bandwidth_kbps,
+                "rx_bandwidth": rx_bandwidth_kbps,
+                "total_bandwidth": total_bandwidth_kbps,
+                "maximum_bandwidth": maximum_bandwidth_kbps,
+                "bandwidth_utilization_percent": bandwidth_utilization_percent,
+                "is_bandwidth_exceeded": is_bandwidth_exceeded,
+                "exceed_bandwidth": exceed_bandwidth_kbps,
+            }
+        )
 
         point = (
             Point("fortigate_fortiview_realtime_statistics")
@@ -393,11 +411,13 @@ def fortiview_realtime_statistics(
             .field("rx_packets", rx_packets)
             .field("tx_shaper_drops", tx_shaper_drops)
             .field("rx_shaper_drops", rx_shaper_drops)
-            .field("tx_bandwidth", tx_bandwidth)
-            .field("rx_bandwidth", rx_bandwidth)
-            .field("maximum_bandwidth", list_of_maximum_bandwith.get(shaper, "unknown"))
-            .field("maximum_bandwidth_unit", "kbps")
-            
+            .field("tx_bandwidth", tx_bandwidth_kbps)
+            .field("rx_bandwidth", rx_bandwidth_kbps)
+            .field("total_bandwidth", total_bandwidth_kbps)
+            .field("maximum_bandwidth", maximum_bandwidth_kbps)
+            .field("bandwidth_utilization_percent", bandwidth_utilization_percent)
+            .field("is_bandwidth_exceeded", is_bandwidth_exceeded)
+            .field("exceed_bandwidth", exceed_bandwidth_kbps)
             .field("app_count", len(apps) if isinstance(apps, list) else 0)
         )
         points.append(point)
