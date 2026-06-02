@@ -30,6 +30,7 @@ def log_disk_event_system(
                 ("start", start),
                 ("rows", rows),
                 ("filter", 'subtype=*"system"'),
+                ("filter", 'level="critical"'),
                 ("filter", f"_metadata.timestamp>={start_time_ms}"),
                 ("filter", f"_metadata.timestamp<={now_ms}"),
                 ("extra", "country_id"),

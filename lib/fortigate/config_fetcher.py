@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from influxdb_client.client.write.point import Point
@@ -86,18 +87,18 @@ def vdoms(api_client: FortigateClient) -> tuple[list[str], list[Point]]:
         size = res_json.get("size", 0)
         matched_count = res_json.get("matched_count", 0)
         next_idx = res_json.get("next_idx", 0)
-        
-        point = (
-            Point("vdom_count")
-            .tag("serial_no", res_json.get("serial_no", "unknown"))
-            .field("count", len(res_json.get("results", [])))
-        )
-        vdom_history_points.append(point)
 
         for item in res_json.get("results", []):
             vdom_list.append(item.get("name", ""))
 
         if len(vdom_list) >= size or matched_count == 0:
+            point = (
+                Point("vdom_count")
+                .tag("serial_no", res_json.get("serial_no", "unknown"))
+                .field("count", len(vdom_list))
+                .field("vdoms", json.dumps(vdom_list))
+            )
+            vdom_history_points.append(point)
             break
 
         start = next_idx
@@ -105,7 +106,7 @@ def vdoms(api_client: FortigateClient) -> tuple[list[str], list[Point]]:
     return vdom_list, vdom_history_points
 
 
-def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
+def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], dict[str, int], list[Point]]:
     """
     Fetches firewall traffic shaper information from the Fortigate API.
 
@@ -114,9 +115,10 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[li
         vdom (str): The VDOM for which to fetch the traffic shaper information.
         
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of dictionaries with firewall traffic shaper information and a list of InfluxDB points.
+        tuple[list[dict[str, Any]], dict[str, int], list[Point]]: A tuple containing a list of dictionaries with firewall traffic shaper information and a list of InfluxDB points.
     """
     traffic_shapers: list[dict[str, Any]] = []
+    list_of_maximum_bandwidth: dict[str, int] = {}
     points: list[Point] = []
     start = 0
 
@@ -139,6 +141,7 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[li
 
         for item in res_json.get("results", []):
             name = item.get("name", "")
+            q_origin_key = item.get("q_origin_key", "")
             guaranteed_bandwidth = item.get("guaranteed-bandwidth", 0)
             maximum_bandwidth = item.get("maximum-bandwidth", 0)
             exceed_bandwidth = item.get("exceed-bandwidth", 0)
@@ -147,10 +150,12 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[li
             q_static = item.get("q_static", False)
             q_global_entry = item.get("q_global_entry", False)
             q_no_edit = item.get("q_no_edit", False)
+            
+            list_of_maximum_bandwidth[q_origin_key] = maximum_bandwidth
 
             traffic_shapers.append({
                 "name": name,
-                "q_origin_key": item.get("q_origin_key", ""),
+                "q_origin_key": q_origin_key,
                 "vdom": response_vdom,
                 "serial": serial_no,
                 "guaranteed-bandwidth": guaranteed_bandwidth,
@@ -206,7 +211,7 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[li
 
         start = next_idx
     
-    return traffic_shapers, points
+    return traffic_shapers, list_of_maximum_bandwidth, points
 
 
 def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:

@@ -175,7 +175,7 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
             # Firewall Traffic Shaper
             try:
                 logger.info(f"Running firewall traffic shaper fetcher for VDOM: {vdom}")
-                _, traffic_shapper_points = firewall_traffic_shapper(
+                _, list_of_maximum_bandwith, traffic_shapper_points = firewall_traffic_shapper(
                     api_client=api_client,
                     vdom=vdom,
                 )
@@ -250,10 +250,12 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
             
             # FortiView Realtime Statistics
             try:
+                # need data 
                 logger.info(f"Running FortiView realtime statistics fetcher for VDOM: {vdom}")
                 _, fortiview_points = fortiview_realtime_statistics(
                     api_client=api_client,
                     vdom=vdom,
+                    list_of_maximum_bandwith=list_of_maximum_bandwith
                 )
                 points.extend(fortiview_points)
                 logger.debug(
@@ -268,23 +270,23 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
                 )
             
             # IPv4 Routing Table
-            try:
-                logger.info(f"Running IPv4 routing table fetcher for VDOM: {vdom}")
-                _, router_points = router_ipv4(
-                    api_client=api_client,
-                    vdom=vdom,
-                )
-                points.extend(router_points)
-                logger.debug(
-                    "IPv4 routing table fetcher for VDOM %s returned %s points",
-                    vdom,
-                    len(router_points),
-                )
-            except Exception as e:
-                logger.warning(
-                    f"IPv4 routing table fetcher for VDOM {vdom} failed with error: {e}. "
-                    "Continuing with other VDOMs."
-                )
+            # try:
+            #     logger.info(f"Running IPv4 routing table fetcher for VDOM: {vdom}")
+            #     _, router_points = router_ipv4(
+            #         api_client=api_client,
+            #         vdom=vdom,
+            #     )
+            #     points.extend(router_points)
+            #     logger.debug(
+            #         "IPv4 routing table fetcher for VDOM %s returned %s points",
+            #         vdom,
+            #         len(router_points),
+            #     )
+            # except Exception as e:
+            #     logger.warning(
+            #         f"IPv4 routing table fetcher for VDOM {vdom} failed with error: {e}. "
+            #         "Continuing with other VDOMs."
+            #     )
             
             # System Resource Usage
             try:

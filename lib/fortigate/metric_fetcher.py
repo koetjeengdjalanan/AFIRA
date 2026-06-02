@@ -50,15 +50,13 @@ def system_resource_usage(
                 continue
 
             current = resource_entry.get("current", 0)
-            historical = resource_entry.get("historical", {})
 
             resource_items.append({
                 "resource": resource_name,
                 "resource_index": resource_index,
                 "vdom": response_vdom,
                 "serial": serial_no,
-                "current": current,
-                "historical": historical,
+                "current": current
             })
 
             point = (
@@ -71,42 +69,19 @@ def system_resource_usage(
             )
             points.append(point)
 
-            if not isinstance(historical, dict):
-                continue
-
-            for window, window_values in historical.items():
-                if not isinstance(window_values, dict):
-                    continue
-
-                historical_point = (
-                    Point("fortigate_system_resource_usage_history")
-                    .tag("serial_no", serial_no)
-                    .tag("vdom", response_vdom)
-                    .tag("resource", resource_name)
-                    .tag("resource_index", str(resource_index))
-                    .tag("window", window)
-                    .field("max", window_values.get("max", 0))
-                    .field("min", window_values.get("min", 0))
-                    .field("average", window_values.get("average", 0))
-                    .field("start", window_values.get("start", 0))
-                    .field("end", window_values.get("end", 0))
-                    .field("sample_count", len(window_values.get("values", [])))
-                )
-                points.append(historical_point)
-
     return resource_items, points
 
 
 def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
     """
-    Fetches license status information from the Fortigate API.
+    Fetches currently licensed FortiGuard services with version and expiration data.
 
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
         vdom (str): The VDOM for which to fetch the license status information.
 
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a flattened list of license status dictionaries and a list of InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing current license dictionaries and a list of InfluxDB points.
     """
     def normalize_key(key: str) -> str:
         return key.replace("-", "_").replace(" ", "_")
@@ -117,6 +92,28 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
         if isinstance(value, (str, int, float)):
             return value
         return None
+
+    def expiration_fields(fields: dict[str, str | int | float]) -> dict[str, str | int | float]:
+        return {
+            key: value
+            for key, value in fields.items()
+            if (
+                "expir" in key
+                or key
+                in {
+                    "expire",
+                    "expires",
+                    "expires_at",
+                    "expiry",
+                    "expiry_date",
+                    "valid_until",
+                }
+            )
+        }
+
+    def is_currently_used_license(fields: dict[str, str | int | float]) -> bool:
+        status = str(fields.get("status", "")).strip().lower()
+        return status == "licensed" and bool(expiration_fields(fields))
 
     def flatten_license_service(
         service: str,
@@ -137,15 +134,18 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
             if field_value is not None:
                 fields[normalize_key(key)] = field_value
 
-        if fields:
+        current_expiration_fields = expiration_fields(fields)
+
+        if fields and current_expiration_fields and is_currently_used_license(fields):
             record = {
                 "serial": serial_no,
-                "version": fortigate_version,
                 "vdom": response_vdom,
                 "service": service if not parent_path else parent_path.split(".")[0],
                 "component": component,
-                **fields,
+                **current_expiration_fields,
             }
+            if "version" in fields:
+                record["version"] = fields["version"]
             license_items.append(record)
 
             point = (
@@ -159,7 +159,10 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
                 .tag("entitlement", str(fields.get("entitlement", "unknown")))
             )
 
-            for field_key, field_value in fields.items():
+            if "version" in fields:
+                point = point.field("version", fields["version"])
+
+            for field_key, field_value in current_expiration_fields.items():
                 point = point.field(field_key, field_value)
 
             points.append(point)
@@ -180,7 +183,6 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
     results = res_json.get("results", {})
     response_vdom = res_json.get("vdom", vdom)
     serial_no = res_json.get("serial", "unknown")
-    fortigate_version = res_json.get("version", "unknown")
     license_items: list[dict[str, Any]] = []
     points: list[Point] = []
 
@@ -282,6 +284,7 @@ def vwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dict
 def fortiview_realtime_statistics(
     api_client: FortigateClient,
     vdom: str,
+    list_of_maximum_bandwith: dict[str, int],
     sort_by: str = "bandwidth",
     ip_version: str = "ipv4",
     count: int = 100,
@@ -338,14 +341,16 @@ def fortiview_realtime_statistics(
         srcintf = detail.get("srcintf", "")
         dstintf = detail.get("dstintf", "")
         apps = detail.get("apps", [])
-        shaper = detail.get("shaper", "")
+        shaper = detail.get("shaper", "unknown")
         sentbyte = detail.get("sentbyte", 0)
         rcvdbyte = detail.get("rcvdbyte", 0)
         tx_packets = detail.get("tx_packets", 0)
         rx_packets = detail.get("rx_packets", 0)
         tx_shaper_drops = detail.get("tx_shaper_drops", 0)
         rx_shaper_drops = detail.get("rx_shaper_drops", 0)
-        tx_bandwidth = detail.get("tx_bandwidth", 0)
+        
+        # convert to kilobits per second (kbps) if the value is in bits per second (bps)
+        tx_bandwidth = detail.get("tx_bandwidth", 0) 
         rx_bandwidth = detail.get("rx_bandwidth", 0)
 
         statistics.append({
@@ -390,6 +395,9 @@ def fortiview_realtime_statistics(
             .field("rx_shaper_drops", rx_shaper_drops)
             .field("tx_bandwidth", tx_bandwidth)
             .field("rx_bandwidth", rx_bandwidth)
+            .field("maximum_bandwidth", list_of_maximum_bandwith.get(shaper, "unknown"))
+            .field("maximum_bandwidth_unit", "kbps")
+            
             .field("app_count", len(apps) if isinstance(apps, list) else 0)
         )
         points.append(point)
