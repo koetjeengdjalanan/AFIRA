@@ -391,19 +391,19 @@ def fortiview_realtime_statistics(
         rx_shaper_drops = detail.get("rx_shaper_drops", 0)
 
         # convert to kilobits per second (kbps) if the value is in bits per second (bps)
-        tx_bandwidth_bps = detail.get("tx_bandwidth", 0)
-        tx_bandwidth_kbps = tx_bandwidth_bps / 1000 if tx_bandwidth_bps > 1000 else tx_bandwidth_bps
-        rx_bandwidth_bps = detail.get("rx_bandwidth", 0)
-        rx_bandwidth_kbps = rx_bandwidth_bps / 1000 if rx_bandwidth_bps > 1000 else rx_bandwidth_bps
+        tx_bandwidth_bps = detail.get("tx_bandwidth", 0.0)
+        tx_bandwidth_kbps = tx_bandwidth_bps / 1000 if tx_bandwidth_bps > 1000 else float(tx_bandwidth_bps)
+        rx_bandwidth_bps = detail.get("rx_bandwidth", 0.0)
+        rx_bandwidth_kbps = rx_bandwidth_bps / 1000 if rx_bandwidth_bps > 1000 else float(rx_bandwidth_bps)
 
         # Calculate total bandwidth, maximum bandwidth, and bandwidth utilization, and check if bandwidth is exceeded
         total_bandwidth_kbps = tx_bandwidth_kbps + rx_bandwidth_kbps
-        maximum_bandwidth_kbps = list_of_maximum_bandwith.get(shaper, 0)
+        maximum_bandwidth_kbps = list_of_maximum_bandwith.get(shaper, 0.0)
         bandwidth_utilization_percent = (
-            (total_bandwidth_kbps / maximum_bandwidth_kbps * 100) if maximum_bandwidth_kbps else 0
+            (total_bandwidth_kbps / maximum_bandwidth_kbps * 100) if maximum_bandwidth_kbps else 0.0
         )
         is_bandwidth_exceeded = int(total_bandwidth_kbps > maximum_bandwidth_kbps) if maximum_bandwidth_kbps else 0
-        exceed_bandwidth_kbps = total_bandwidth_kbps - maximum_bandwidth_kbps if is_bandwidth_exceeded else 0
+        exceed_bandwidth_kbps = total_bandwidth_kbps - maximum_bandwidth_kbps if is_bandwidth_exceeded else 0.0
 
         statistics.append(
             {
