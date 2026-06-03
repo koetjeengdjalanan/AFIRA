@@ -168,6 +168,25 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
         except Exception as e:
             logger.error(f"Firmware fetcher failed with error: {e}. Aborting AFIRA run.")
             raise
+
+        # License Status
+        try:
+            logger.info(f"Running license status fetcher for VDOM: {vdom}")
+            _, license_points = license_status(
+                api_client=api_client
+            )
+            points.extend(license_points)
+            logger.debug(
+                "License status fetcher for VDOM %s returned %s points",
+                vdom,
+                len(license_points),
+            )
+        except Exception as e:
+            logger.warning(
+                f"License status fetcher for VDOM {vdom} failed with error: {e}. "
+                "Continuing with other VDOMs."
+            )
+           
         
         # Fetch per-VDOM data
         logger.debug("Start VDOM-specific fetchers loop")
@@ -194,7 +213,7 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
             # SD-WAN Health Check
             try:
                 logger.info(f"Running SD-WAN health check fetcher for VDOM: {vdom}")
-                _, sdwan_points = sdwan_health_check(
+                _, sla_configuration, sdwan_points = sdwan_health_check(
                     api_client=api_client,
                     vdom=vdom,
                 )
@@ -216,6 +235,7 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
                 _, vwan_points = vwan_health_check(
                     api_client=api_client,
                     vdom=vdom,
+                    sla_configuration=sla_configuration
                 )
                 points.extend(vwan_points)
                 logger.debug(
@@ -229,25 +249,7 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
                     "Continuing with other VDOMs."
                 )
             
-            # License Status
-            try:
-                logger.info(f"Running license status fetcher for VDOM: {vdom}")
-                _, license_points = license_status(
-                    api_client=api_client,
-                    vdom=vdom,
-                )
-                points.extend(license_points)
-                logger.debug(
-                    "License status fetcher for VDOM %s returned %s points",
-                    vdom,
-                    len(license_points),
-                )
-            except Exception as e:
-                logger.warning(
-                    f"License status fetcher for VDOM {vdom} failed with error: {e}. "
-                    "Continuing with other VDOMs."
-                )
-            
+   
             # FortiView Realtime Statistics
             try:
                 # need data 
@@ -332,6 +334,7 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
                 _, vwan_sla_points = vwan_sla_logs(
                     api_client=api_client,
                     vdom=vdom,
+                    sla_configuration=sla_configuration
                 )
                 points.extend(vwan_sla_points)
                 logger.debug(
@@ -374,6 +377,7 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
         logger.debug("Start interface-specific fetchers loop")
         for interface in interfaces:
             interface_name = interface.get("name", "unknown")
+            interface_alias = interface.get("alias", "unknown")
             interface_vdom = interface.get("vdom", "unknown")
 
             # Traffic History Interface
@@ -382,7 +386,8 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
                 _, traffic_hist_points = traffic_history_interface(
                     api_client=api_client,
                     vdom=interface_vdom,
-                    interface_name=interface_name
+                    interface_name=interface_name,
+                    interface_alias=interface_alias
                 )
                 points.extend(traffic_hist_points)
                 logger.debug(
