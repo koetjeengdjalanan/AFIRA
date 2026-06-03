@@ -39,6 +39,7 @@ def system_interface(api_client: FortigateClient) -> tuple[list[dict[str, Any]],
         for item in res_json.get("results", []):
             interfaces.append({
                 "name": item.get("name", ""),
+                "alias": item.get("alias", ""),
                 "vdom": item.get("vdom", "")
             })
             
@@ -226,13 +227,20 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dic
         tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of dictionaries with SD-WAN health check information and a list of InfluxDB points.
     """
     health_checks: list[dict[str, Any]] = []
+    sla_configuration: dict[str, Any] = {}
     points: list[Point] = []
     start = 0
 
     while True:
         res = api_client.get(
             "/api/v2/cmdb/system/sdwan/health-check",
-            params={"vdom": vdom, "start": start, "count": 100},
+            params={
+                "vdom": vdom, 
+                "start": start, 
+                "count": 100, 
+                "datasource": True, 
+                "with_meta": True
+            },
             verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
         res_json = res.json()
@@ -355,27 +363,46 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dic
             )
             points.append(point)
 
+            sla_thresholds = {}
             for sla in sla_entries:
                 sla_id = sla.get("id", 0)
+                
+                latency_threshold = sla.get("latency-threshold", 0)
+                jitter_threshold = sla.get("jitter-threshold", 0)
+                packetloss_threshold = sla.get("packetloss-threshold", 0)
+                
+                sla_thresholds[sla_id] = {
+                    "latency_threshold": latency_threshold,
+                    "jitter_threshold": jitter_threshold,
+                    "packetloss_threshold": packetloss_threshold,
+                }
+                
                 sla_point = (
                     Point("fortigate_sdwan_health_check_sla")
                     .tag("serial_no", serial_no)
                     .tag("vdom", response_vdom)
-                    .tag("health_check_name", name or "unknown")
+                    .tag("sla_name", name or "unknown")
                     .tag("sla_id", str(sla_id))
                     .tag("link_cost_factor", sla.get("link-cost-factor", "unknown"))
-                    .field("latency_threshold", sla.get("latency-threshold", 0))
-                    .field("jitter_threshold", sla.get("jitter-threshold", 0))
-                    .field("packetloss_threshold", sla.get("packetloss-threshold", 0))
+                    .field("latency_threshold", latency_threshold)
+                    .field("jitter_threshold", jitter_threshold)
+                    .field("packetloss_threshold", packetloss_threshold)
                     .field("priority_in_sla", sla.get("priority-in-sla", 0))
                     .field("priority_out_sla", sla.get("priority-out-sla", 0))
                 )
                 points.append(sla_point)
+            
+            sla_configuration[name] = {
+                "protocol": protocol,
+                "server": server,
+                "members": members,
+                "sla_thresholds": sla_thresholds
+            }
 
         if len(health_checks) >= size or matched_count == 0:
             break
 
         start = next_idx
 
-    return health_checks, points
+    return health_checks, sla_configuration, points
 
