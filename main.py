@@ -171,20 +171,19 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
 
         # License Status
         try:
-            logger.info(f"Running license status fetcher for VDOM: {vdom}")
+            logger.info(f"Running license status fetcher")
             _, license_points = license_status(
                 api_client=api_client
             )
             points.extend(license_points)
             logger.debug(
-                "License status fetcher for VDOM %s returned %s points",
-                vdom,
+                "License status fetcher returned %s points",
                 len(license_points),
             )
         except Exception as e:
             logger.warning(
-                f"License status fetcher for VDOM {vdom} failed with error: {e}. "
-                "Continuing with other VDOMs."
+                f"License status fetcher failed with error: {e}. "
+                "Continuing with other fetchers."
             )
            
         
