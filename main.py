@@ -378,6 +378,14 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
             interface_name = interface.get("name", "unknown")
             interface_alias = interface.get("alias", "unknown")
             interface_vdom = interface.get("vdom", "unknown")
+            is_monitor_bandwidth_enable = True if interface.get("monitor-bandwith", "disable") == "enable" else False
+            
+            if not is_monitor_bandwidth_enable:
+                logger.info(
+                    f"Skipping traffic history fetcher for interface: {interface_name} in VDOM: {interface_vdom} "
+                    "because bandwidth monitoring is disabled."
+                )
+                continue
 
             # Traffic History Interface
             try:

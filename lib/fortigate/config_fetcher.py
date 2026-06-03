@@ -40,7 +40,8 @@ def system_interface(api_client: FortigateClient) -> tuple[list[dict[str, Any]],
             interfaces.append({
                 "name": item.get("name", ""),
                 "alias": item.get("alias", ""),
-                "vdom": item.get("vdom", "")
+                "vdom": item.get("vdom", ""),
+                "monitor-bandwith": item.get("monitor-bandwith", "disable")
             })
             
             point = (
