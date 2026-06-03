@@ -1,6 +1,8 @@
+import json
 from typing import Any
 
 from influxdb_client.client.write.point import Point
+from influxdb_client.domain.write_precision import WritePrecision
 
 from models import FortigateClient
 
@@ -72,7 +74,7 @@ def system_resource_usage(
     return resource_items, points
 
 
-def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
+def license_status(api_client: FortigateClient) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches currently licensed FortiGuard services with version and expiration data.
 
@@ -97,18 +99,7 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
         return {
             key: value
             for key, value in fields.items()
-            if (
-                "expir" in key
-                or key
-                in {
-                    "expire",
-                    "expires",
-                    "expires_at",
-                    "expiry",
-                    "expiry_date",
-                    "valid_until",
-                }
-            )
+            if ("expires" == key)
         }
 
     def is_currently_used_license(fields: dict[str, str | int | float]) -> bool:
@@ -134,15 +125,14 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
             if field_value is not None:
                 fields[normalize_key(key)] = field_value
 
-        current_expiration_fields = expiration_fields(fields)
+        current_expiration_fields: dict[str, int] = expiration_fields(fields)
 
-        if fields and current_expiration_fields and is_currently_used_license(fields):
+        if fields:
             record = {
                 "serial": serial_no,
-                "vdom": response_vdom,
                 "service": service if not parent_path else parent_path.split(".")[0],
                 "component": component,
-                **current_expiration_fields,
+                "expires": current_expiration_fields.get("expires", 0),
             }
             if "version" in fields:
                 record["version"] = fields["version"]
@@ -151,7 +141,6 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
             point = (
                 Point("fortigate_license_status")
                 .tag("serial_no", serial_no)
-                .tag("vdom", response_vdom)
                 .tag("service", record["service"])
                 .tag("component", component)
                 .tag("type", str(fields.get("type", "unknown")))
@@ -172,7 +161,6 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
 
     res = api_client.get(
         "/api/v2/monitor/license/status",
-        params={"vdom": vdom},
         verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
@@ -181,7 +169,6 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
         raise Exception(f"Failed to fetch license status information: {res.text}")
 
     results = res_json.get("results", {})
-    response_vdom = res_json.get("vdom", vdom)
     serial_no = res_json.get("serial", "unknown")
     license_items: list[dict[str, Any]] = []
     points: list[Point] = []
@@ -193,13 +180,14 @@ def license_status(api_client: FortigateClient, vdom: str) -> tuple[list[dict[st
     return license_items, points
 
 
-def vwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
+def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration: dict[str, Any]) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches virtual WAN health check information from the Fortigate API.
 
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
         vdom (str): The VDOM for which to fetch the virtual WAN health check information.
+        sla_configuration (dict[str, Any]): The SLA configuration dictionary.
 
     Returns:
         tuple[list[dict[str, Any]], list[Point]]: A tuple containing a flattened list of virtual WAN health check dictionaries and a list of InfluxDB points.
@@ -224,6 +212,9 @@ def vwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dict
         if not isinstance(members, dict):
             continue
 
+        sla_configuration_entry = sla_configuration.get(health_check_name, {})
+        sla_thresholds = sla_configuration_entry.get("sla_thresholds", {}) if isinstance(sla_configuration_entry, dict) else {}
+
         for interface_name, metrics in members.items():
             if not isinstance(metrics, dict):
                 continue
@@ -240,7 +231,7 @@ def vwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dict
             rx_bandwidth = metrics.get("rx_bandwidth", 0)
             state_changed = metrics.get("state_changed", 0)
 
-            health_checks.append({
+            health_check_record = {
                 "name": health_check_name,
                 "interface": interface_name,
                 "vdom": response_vdom,
@@ -256,27 +247,77 @@ def vwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dict
                 "tx_bandwidth": tx_bandwidth,
                 "rx_bandwidth": rx_bandwidth,
                 "state_changed": state_changed,
-            })
+            }
 
-            point = (
-                Point("fortigate_virtual_wan_health_check")
-                .tag("serial_no", serial_no)
-                .tag("vdom", response_vdom)
-                .tag("health_check_name", health_check_name)
-                .tag("interface_name", interface_name)
-                .tag("status", status)
-                .field("latency", latency)
-                .field("jitter", jitter)
-                .field("packet_loss", packet_loss)
-                .field("packet_sent", packet_sent)
-                .field("packet_received", packet_received)
-                .field("sla_targets_met_count", len(sla_targets_met) if isinstance(sla_targets_met, list) else 0)
-                .field("session", session)
-                .field("tx_bandwidth", tx_bandwidth)
-                .field("rx_bandwidth", rx_bandwidth)
-                .field("state_changed", state_changed)
-            )
-            points.append(point)
+            if not sla_targets_met:
+                health_check_record["sla_target"] = "none"
+                health_check_record["latency_threshold"] = "none"
+                health_check_record["jitter_threshold"] = "none"
+                health_check_record["packetloss_threshold"] = "none"
+
+            health_checks.append(health_check_record)
+
+            if not sla_targets_met:
+                point = (
+                    Point("fortigate_virtual_wan_health_check")
+                    .tag("serial_no", serial_no)
+                    .tag("vdom", response_vdom)
+                    .tag("health_check_name", health_check_name)
+                    .tag("interface_name", interface_name)
+                    .tag("status", status)
+                    .tag("sla_target", "none")
+                    .field("latency", latency)
+                    .field("jitter", jitter)
+                    .field("packet_loss", packet_loss)
+                    .field("packet_sent", packet_sent)
+                    .field("packet_received", packet_received)
+                    .field("sla_targets_met_count", 0)
+                    .field("session", session)
+                    .field("tx_bandwidth", tx_bandwidth)
+                    .field("rx_bandwidth", rx_bandwidth)
+                    .field("state_changed", state_changed)
+                    .field("latency_threshold", 0)
+                    .field("jitter_threshold", 0)
+                    .field("packetloss_threshold", 0)
+                )
+                points.append(point)
+
+            for target in sla_targets_met:
+                if not isinstance(target, int):
+                    continue
+
+                latency_threshold = sla_thresholds.get(target, {}).get("latency-threshold", 0) if isinstance(sla_thresholds, dict) else 0
+                jitter_threshold = sla_thresholds.get(target, {}).get("jitter-threshold", 0) if isinstance(sla_thresholds, dict) else 0
+                packetloss_threshold = sla_thresholds.get(target, {}).get("packetloss-threshold", 0) if isinstance(sla_thresholds, dict) else 0
+
+                health_check_record["sla_target"] = target
+                health_check_record["latency_threshold"] = latency_threshold
+                health_check_record["jitter_threshold"] = jitter_threshold
+                health_check_record["packetloss_threshold"] = packetloss_threshold
+
+                point = (
+                    Point("fortigate_virtual_wan_health_check")
+                    .tag("serial_no", serial_no)
+                    .tag("vdom", response_vdom)
+                    .tag("health_check_name", health_check_name)
+                    .tag("interface_name", interface_name)
+                    .tag("status", status)
+                    .tag("sla_target", str(target))
+                    .field("latency", latency)
+                    .field("jitter", jitter)
+                    .field("packet_loss", packet_loss)
+                    .field("packet_sent", packet_sent)
+                    .field("packet_received", packet_received)
+                    .field("sla_targets_met_count", len(sla_targets_met) if isinstance(sla_targets_met, list) else 0)
+                    .field("session", session)
+                    .field("tx_bandwidth", tx_bandwidth)
+                    .field("rx_bandwidth", rx_bandwidth)
+                    .field("state_changed", state_changed)
+                    .field("latency_threshold", latency_threshold)
+                    .field("jitter_threshold", jitter_threshold)
+                    .field("packetloss_threshold", packetloss_threshold)
+                )
+                points.append(point)
 
     return health_checks, points
 
@@ -596,26 +637,37 @@ def vwan_interface_log(api_client: FortigateClient, vdom: str) -> tuple[list[dic
                 .field("bi_bandwidth", bi_bandwidth)
                 .field("tx_bytes", tx_bytes)
                 .field("rx_bytes", rx_bytes)
-                .time(timestamp)
+                .time(timestamp, WritePrecision.S)
             )
             points.append(point)
 
     return interface_logs, points
 
-def vwan_sla_logs(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
+
+def vwan_sla_logs(
+    api_client: FortigateClient, 
+    vdom: str, 
+    sla_configuration: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches virtual WAN SLA log information from the Fortigate API.
 
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
         vdom (str): The VDOM for which to fetch virtual WAN SLA logs.
+        sla_configuration (dict[str, Any]): The SLA configuration dictionary.
 
     Returns:
         tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of SLA log dictionaries and a list of InfluxDB points.
     """
     res = api_client.get(
         "/api/v2/monitor/virtual-wan/sla-log",
-        params={"vdom": vdom},
+        params={
+            "vdom": vdom, 
+            "latest": True, 
+            "skip_vpn_child": True, 
+            "include_sla_targets_met": True
+        },
         verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
@@ -634,8 +686,32 @@ def vwan_sla_logs(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str
             continue
 
         sla_name = sla_entry.get("name", "unknown")
+        sla_configuration_entry = sla_configuration.get(sla_name, {})
         interface_name = sla_entry.get("interface", "unknown")
+        sla_protocol = sla_configuration_entry.get("protocol", "") if isinstance(sla_configuration_entry, dict) else ""
+        sla_servers = sla_configuration_entry.get("server", "") if isinstance(sla_configuration_entry, dict) else ""
+        sla_thresholds = sla_configuration_entry.get("sla_thresholds", {}) if isinstance(sla_configuration_entry, dict) else {}
         logs = sla_entry.get("logs", [])
+
+        if not logs:
+            point = (
+                Point("fortigate_vwan_sla_log")
+                .tag("serial_no", serial_no)
+                .tag("vdom", response_vdom)
+                .tag("sla_name", sla_name or "unknown")
+                .tag("sla_target", "none")
+                .tag("interface", interface_name or "unknown")
+                .tag("link", "no-members")
+                .tag("protocol", sla_protocol or "unknown")
+                .tag("detected_server", sla_servers if isinstance(sla_servers, str) else "unknown")
+                .field("latency", 0)
+                .field("jitter", 0)
+                .field("packetloss", 0)
+                .field("latency_threshold", 0)
+                .field("jitter_threshold", 0)
+                .field("packetloss_threshold", 0)
+            )
+            points.append(point)
 
         for log_index, log in enumerate(logs):
             if not isinstance(log, dict):
@@ -646,10 +722,12 @@ def vwan_sla_logs(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str
             latency = log.get("latency", 0)
             jitter = log.get("jitter", 0)
             packetloss = log.get("packetloss", 0)
-
+            sla_targets_met = log.get("sla_targets_met", [])
+            
             log_record = {
                 "name": sla_name,
                 "interface": interface_name,
+                "protocol": sla_protocol,
                 "vdom": response_vdom,
                 "serial": serial_no,
                 "timestamp": timestamp,
@@ -658,26 +736,57 @@ def vwan_sla_logs(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str
                 "jitter": jitter,
                 "packetloss": packetloss,
             }
+            
+            if not sla_targets_met:
+                log_record["sla_target"] = "none"
+                log_record["latency_threshold"] = "none"
+                log_record["jitter_threshold"] = "none"
+                log_record["packetloss_threshold"] = "none"
+
             sla_logs.append(log_record)
 
-            point = (
-                Point("fortigate_vwan_sla_log")
-                .tag("serial_no", serial_no)
-                .tag("vdom", response_vdom)
-                .tag("sla_name", sla_name or "unknown")
-                .tag("interface", interface_name or "unknown")
-                .tag("link", link or "unknown")
-                .tag("log_index", str(log_index))
-                .field("latency", latency)
-                .field("jitter", jitter)
-                .field("packetloss", packetloss)
-                .time(timestamp)
-            )
-            points.append(point)
+            for target in sla_targets_met:
+                if not isinstance(target, int):
+                    continue
+                
+                latency_threshold = sla_thresholds.get(target, {}).get("latency-threshold", 0) if isinstance(sla_thresholds, dict) else 0
+                jitter_threshold = sla_thresholds.get(target, {}).get("jitter-threshold", 0) if isinstance(sla_thresholds, dict) else 0
+                packetloss_threshold = sla_thresholds.get(target, {}).get("packetloss-threshold", 0) if isinstance(sla_thresholds, dict) else 0
+                
+                log_record["sla_target"] = target
+                log_record["latency_threshold"] = latency_threshold
+                log_record["jitter_threshold"] = jitter_threshold
+                log_record["packetloss_threshold"] = packetloss_threshold
+                
+                point = (
+                    Point("fortigate_vwan_sla_log")
+                    .tag("serial_no", serial_no)
+                    .tag("vdom", response_vdom)
+                    .tag("sla_name", sla_name or "unknown")
+                    .tag("sla_target", str(target))
+                    .tag("interface", interface_name or "unknown")
+                    .tag("link", link or "unknown")
+                    .tag("log_index", str(log_index))
+                    .tag("protocol", sla_protocol or "unknown")
+                    .tag("detected_server", sla_servers if isinstance(sla_servers, str) else "unknown")
+                    .field("latency", latency)
+                    .field("jitter", jitter)
+                    .field("packetloss", packetloss)
+                    .field("latency_threshold", latency_threshold)
+                    .field("jitter_threshold", jitter_threshold)
+                    .field("packetloss_threshold", packetloss_threshold)
+                    .time(timestamp, WritePrecision.S)
+                )
+                points.append(point)
 
     return sla_logs, points
 
-def traffic_history_interface(api_client: FortigateClient, vdom: str, interface_name: str) -> tuple[list[dict[str, Any]], list[Point]]:
+
+def traffic_history_interface(
+    api_client: FortigateClient, 
+    vdom: str, interface_name: str, 
+    interface_alias: str
+) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches system traffic history information for an interface from the Fortigate API.
 
@@ -685,6 +794,7 @@ def traffic_history_interface(api_client: FortigateClient, vdom: str, interface_
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
         vdom (str): The VDOM for which to fetch traffic history.
         interface_name (str): The interface name used for tagging traffic history points.
+        interface_alias (str): The interface alias used for tagging traffic history points.
 
     Returns:
         tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of traffic history dictionaries and a list of InfluxDB points.
@@ -720,6 +830,7 @@ def traffic_history_interface(api_client: FortigateClient, vdom: str, interface_
 
         traffic_record = {
             "interface": interface_name,
+            "interface_alias": interface_alias,
             "vdom": response_vdom,
             "serial": serial_no,
             "direction": "tx",
@@ -733,9 +844,10 @@ def traffic_history_interface(api_client: FortigateClient, vdom: str, interface_
             .tag("serial_no", serial_no)
             .tag("vdom", response_vdom)
             .tag("interface", interface_name or "unknown")
+            .tag("interface_alias", interface_alias or "unknown")
             .tag("direction", "tx")
             .field("bps", bps)
-            .time(int(utc_ms * 1_000_000))  # Convert milliseconds to nanoseconds
+            .time(utc_ms, WritePrecision.MS)  # Convert milliseconds to nanoseconds
         )
         points.append(point)
 
@@ -749,6 +861,7 @@ def traffic_history_interface(api_client: FortigateClient, vdom: str, interface_
         bps = rx_entry.get("bps", 0)
         traffic_record = {
             "interface": interface_name,
+            "interface_alias": interface_alias,
             "vdom": response_vdom,
             "serial": serial_no,
             "direction": "rx",
@@ -762,9 +875,10 @@ def traffic_history_interface(api_client: FortigateClient, vdom: str, interface_
             .tag("serial_no", serial_no)
             .tag("vdom", response_vdom)
             .tag("interface", interface_name or "unknown")
+            .tag("interface_alias", interface_alias or "unknown")
             .tag("direction", "rx")
             .field("bps", bps)
-            .time(int(utc_ms * 1_000_000))  # Convert milliseconds to nanoseconds
+            .time(utc_ms, WritePrecision.MS)  # Convert milliseconds to nanoseconds
         )
         points.append(point)
 
@@ -774,9 +888,172 @@ def traffic_history_interface(api_client: FortigateClient, vdom: str, interface_
         .tag("serial_no", serial_no)
         .tag("vdom", response_vdom)
         .tag("interface", interface_name or "unknown")
+        .tag("interface_alias", interface_alias or "unknown")
         .field("last_tx_bps", last_tx)
         .field("last_rx_bps", last_rx)
     )
     points.append(summary_point)
 
     return traffic_history, points
+
+def historical_statistics(
+    api_client: FortigateClient,
+    vdom: str,
+    report_by: str = "application",
+    sort_by: str = "bytes",
+    ip_version: str = "ipv4",
+    count: int = 100,
+    device: str = "disk",
+    latest: bool = False,
+    filter_params: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[Point]]:
+    """
+    Fetches FortiView historical statistics from the Fortigate API.
+
+    Args:
+        api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
+        vdom (str): The VDOM for which to fetch historical statistics.
+        report_by (str): The field used to group historical statistics (e.g. application, category).
+        sort_by (str): The field used to sort historical statistics.
+        ip_version (str): The IP version filter.
+        count (int): The maximum number of historical statistic records to fetch.
+        device (str): The device for log storage (disk or memory).
+        start (int): The start Unix timestamp for historical statistics.
+        end (int): The end Unix timestamp for historical statistics.
+        latest (bool): Whether to fetch the latest historical statistics.
+        filter_params (dict[str, Any] | None): Optional filter parameters serialized as JSON.
+
+    Returns:
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing historical statistic dictionaries and InfluxDB points.
+    """
+    params: dict[str, Any] = {
+        "report_by": report_by,
+        "sort_by": sort_by,
+        "ip_version": ip_version,
+        "count": count,
+        "device": device,
+        "latest": str(latest).lower(),
+        "vdom": vdom,
+    }
+    if filter_params:
+        params["filter"] = json.dumps(filter_params)
+
+    res = api_client.get(
+        "/api/v2/monitor/fortiview/historical-statistics",
+        params=params,
+        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
+    )
+    res_json = res.json()
+
+    if not res.ok or "results" not in res_json:
+        raise Exception(f"Failed to fetch FortiView historical statistics: {res.text}")
+
+    results = res_json.get("results", {})
+    details = results.get("details", []) if isinstance(results, dict) else []
+    response_vdom = res_json.get("vdom", vdom)
+    serial_no = res_json.get("serial", "unknown")
+    statistics: list[dict[str, Any]] = []
+    points: list[Point] = []
+
+    app_name_cache: dict[int, str] = {}
+
+    def resolve_app_name(app_id: int) -> str:
+        if app_id in app_name_cache:
+            return app_name_cache[app_id]
+        lookup_res = api_client.get(
+            "/api/v2/cmdb/application/name",
+            params={"filter": f"id=={app_id}", "format": "name", "vdom": vdom},
+            verify=False,
+        )
+        if lookup_res.ok:
+            lookup_json = lookup_res.json()
+            lookup_results = lookup_json.get("results", [])
+            if lookup_results and isinstance(lookup_results[0], dict):
+                name = lookup_results[0].get("name", "")
+                if name:
+                    app_name_cache[app_id] = name
+                    return name
+        fallback = f"app_{app_id}"
+        app_name_cache[app_id] = fallback
+        return fallback
+
+    for detail_index, detail in enumerate(details):
+        if not isinstance(detail, dict):
+            continue
+
+        apps = detail.get("apps", [])
+        sessions = detail.get("sessions", 0)
+        session_allow = detail.get("session_allow", 0)
+        session_block = detail.get("session_block", 0)
+        rcvdbyte = detail.get("rcvdbyte", 0)
+        sentbyte = detail.get("sentbyte", 0)
+        total_bytes = detail.get("bytes", 0)
+        category = detail.get("category", "unknown")
+        risk_id = detail.get("risk_id", 0)
+        risk_txt = detail.get("risk_txt", "")
+
+        statistics.append(
+            {
+                "detail_index": detail_index,
+                "vdom": response_vdom,
+                "serial": serial_no,
+                "category": category,
+                "risk_id": risk_id,
+                "risk_txt": risk_txt,
+                "sessions": sessions,
+                "session_allow": session_allow,
+                "session_block": session_block,
+                "rcvdbyte": rcvdbyte,
+                "sentbyte": sentbyte,
+                "bytes": total_bytes,
+            }
+        )
+
+        point = (
+            Point("fortigate_fortiview_historical_statistics")
+            .tag("serial_no", serial_no)
+            .tag("vdom", response_vdom)
+            .tag("category", category or "unknown")
+            .tag("risk_id", str(risk_id))
+            .tag("risk_txt", risk_txt or "none")
+            .tag("report_by", report_by)
+            .field("sessions", sessions)
+            .field("session_allow", session_allow)
+            .field("session_block", session_block)
+            .field("rcvdbyte", rcvdbyte)
+            .field("sentbyte", sentbyte)
+            .field("bytes", total_bytes)
+        )
+        points.append(point)
+
+        if not isinstance(apps, list):
+            continue
+
+        for app in apps:
+            if not isinstance(app, dict):
+                continue
+
+            app_id = app.get("id", 0)
+            app_name = app.get("name", "")
+            if not app_name and app_id:
+                app_name = resolve_app_name(app_id)
+
+            app_point = (
+                Point("fortigate_fortiview_historical_app_statistics")
+                .tag("serial_no", serial_no)
+                .tag("vdom", response_vdom)
+                .tag("category", category or "unknown")
+                .tag("risk_id", str(risk_id))
+                .tag("risk_txt", risk_txt or "none")
+                .tag("app_id", str(app_id))
+                .tag("app_name", app_name or "unknown")
+                .field("sessions", app.get("sessions", sessions))
+                .field("session_allow", app.get("session_allow", session_allow))
+                .field("session_block", app.get("session_block", session_block))
+                .field("rcvdbyte", app.get("rcvdbyte", rcvdbyte))
+                .field("sentbyte", app.get("sentbyte", sentbyte))
+                .field("bytes", app.get("bytes", total_bytes))
+            )
+            points.append(app_point)
+
+    return statistics, points
