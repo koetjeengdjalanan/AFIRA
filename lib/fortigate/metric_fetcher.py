@@ -220,16 +220,16 @@ def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration:
                 continue
 
             status = metrics.get("status", "unknown")
-            latency = metrics.get("latency", 0)
-            jitter = metrics.get("jitter", 0)
-            packet_loss = metrics.get("packet_loss", 0)
-            packet_sent = metrics.get("packet_sent", 0)
-            packet_received = metrics.get("packet_received", 0)
+            latency = float(metrics.get("latency", 0.0))
+            jitter = float(metrics.get("jitter", 0.0))
+            packet_loss = float(metrics.get("packet_loss", 0.0))
+            packet_sent = float(metrics.get("packet_sent", 0.0))
+            packet_received = float(metrics.get("packet_received", 0.0))
             sla_targets_met = metrics.get("sla_targets_met", [])
-            session = metrics.get("session", 0)
-            tx_bandwidth = metrics.get("tx_bandwidth", 0)
-            rx_bandwidth = metrics.get("rx_bandwidth", 0)
-            state_changed = metrics.get("state_changed", 0)
+            session = float(metrics.get("session", 0.0))
+            tx_bandwidth = float(metrics.get("tx_bandwidth", 0.0))
+            rx_bandwidth = float(metrics.get("rx_bandwidth", 0.0))
+            state_changed = float(metrics.get("state_changed", 0.0))
 
             health_check_record = {
                 "name": health_check_name,
@@ -251,9 +251,9 @@ def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration:
 
             if not sla_targets_met:
                 health_check_record["sla_target"] = "none"
-                health_check_record["latency_threshold"] = "none"
-                health_check_record["jitter_threshold"] = "none"
-                health_check_record["packetloss_threshold"] = "none"
+                health_check_record["latency_threshold"] = 0.0
+                health_check_record["jitter_threshold"] = 0.0
+                health_check_record["packetloss_threshold"] = 0.0
 
             health_checks.append(health_check_record)
 
@@ -276,9 +276,9 @@ def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration:
                     .field("tx_bandwidth", tx_bandwidth)
                     .field("rx_bandwidth", rx_bandwidth)
                     .field("state_changed", state_changed)
-                    .field("latency_threshold", 0)
-                    .field("jitter_threshold", 0)
-                    .field("packetloss_threshold", 0)
+                    .field("latency_threshold", 0.0)
+                    .field("jitter_threshold", 0.0)
+                    .field("packetloss_threshold", 0.0)
                 )
                 points.append(point)
 
@@ -286,9 +286,9 @@ def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration:
                 if not isinstance(target, int):
                     continue
 
-                latency_threshold = sla_thresholds.get(target, {}).get("latency-threshold", 0) if isinstance(sla_thresholds, dict) else 0
-                jitter_threshold = sla_thresholds.get(target, {}).get("jitter-threshold", 0) if isinstance(sla_thresholds, dict) else 0
-                packetloss_threshold = sla_thresholds.get(target, {}).get("packetloss-threshold", 0) if isinstance(sla_thresholds, dict) else 0
+                latency_threshold = float(sla_thresholds.get(target, {}).get("latency-threshold", 0.0)) if isinstance(sla_thresholds, dict) else 0.0
+                jitter_threshold = float(sla_thresholds.get(target, {}).get("jitter-threshold", 0.0)) if isinstance(sla_thresholds, dict) else 0.0
+                packetloss_threshold = float(sla_thresholds.get(target, {}).get("packetloss-threshold", 0.0)) if isinstance(sla_thresholds, dict) else 0.0
 
                 health_check_record["sla_target"] = target
                 health_check_record["latency_threshold"] = latency_threshold
@@ -704,12 +704,12 @@ def vwan_sla_logs(
                 .tag("link", "no-members")
                 .tag("protocol", sla_protocol or "unknown")
                 .tag("detected_server", sla_servers if isinstance(sla_servers, str) else "unknown")
-                .field("latency", 0)
-                .field("jitter", 0)
-                .field("packetloss", 0)
-                .field("latency_threshold", 0)
-                .field("jitter_threshold", 0)
-                .field("packetloss_threshold", 0)
+                .field("latency", 0.0)
+                .field("jitter", 0.0)
+                .field("packetloss", 0.0)
+                .field("latency_threshold", 0.0)
+                .field("jitter_threshold", 0.0)
+                .field("packetloss_threshold", 0.0)
             )
             points.append(point)
 
@@ -719,9 +719,9 @@ def vwan_sla_logs(
 
             timestamp = log.get("timestamp", 0)
             link = log.get("link", "unknown")
-            latency = log.get("latency", 0)
-            jitter = log.get("jitter", 0)
-            packetloss = log.get("packetloss", 0)
+            latency = float(log.get("latency", 0.0))
+            jitter = float(log.get("jitter", 0.0))
+            packetloss = float(log.get("packetloss", 0.0))
             sla_targets_met = log.get("sla_targets_met", [])
             
             log_record = {
@@ -739,9 +739,9 @@ def vwan_sla_logs(
             
             if not sla_targets_met:
                 log_record["sla_target"] = "none"
-                log_record["latency_threshold"] = "none"
-                log_record["jitter_threshold"] = "none"
-                log_record["packetloss_threshold"] = "none"
+                log_record["latency_threshold"] = 0.0
+                log_record["jitter_threshold"] = 0.0
+                log_record["packetloss_threshold"] = 0.0
 
             sla_logs.append(log_record)
 
@@ -749,9 +749,9 @@ def vwan_sla_logs(
                 if not isinstance(target, int):
                     continue
                 
-                latency_threshold = sla_thresholds.get(target, {}).get("latency-threshold", 0) if isinstance(sla_thresholds, dict) else 0
-                jitter_threshold = sla_thresholds.get(target, {}).get("jitter-threshold", 0) if isinstance(sla_thresholds, dict) else 0
-                packetloss_threshold = sla_thresholds.get(target, {}).get("packetloss-threshold", 0) if isinstance(sla_thresholds, dict) else 0
+                latency_threshold = float(sla_thresholds.get(target, {}).get("latency-threshold", 0)) if isinstance(sla_thresholds, dict) else 0.0
+                jitter_threshold = float(sla_thresholds.get(target, {}).get("jitter-threshold", 0)) if isinstance(sla_thresholds, dict) else 0.0
+                packetloss_threshold = float(sla_thresholds.get(target, {}).get("packetloss-threshold", 0)) if isinstance(sla_thresholds, dict) else 0.0
                 
                 log_record["sla_target"] = target
                 log_record["latency_threshold"] = latency_threshold
