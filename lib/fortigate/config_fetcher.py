@@ -41,7 +41,7 @@ def system_interface(api_client: FortigateClient) -> tuple[list[dict[str, Any]],
                 "name": item.get("name", ""),
                 "alias": item.get("alias", ""),
                 "vdom": item.get("vdom", ""),
-                "monitor-bandwith": item.get("monitor-bandwith", "disable")
+                "monitor-bandwidth": item.get("monitor-bandwidth", "disable")
             })
             
             point = (

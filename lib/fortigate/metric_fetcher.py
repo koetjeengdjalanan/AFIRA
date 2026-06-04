@@ -325,7 +325,7 @@ def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration:
 def fortiview_realtime_statistics(
     api_client: FortigateClient,
     vdom: str,
-    list_of_maximum_bandwith: dict[str, int],
+    list_of_maximum_bandwidth: dict[str, int],
     sort_by: str = "bandwidth",
     ip_version: str = "ipv4",
     count: int = 100,
@@ -398,7 +398,7 @@ def fortiview_realtime_statistics(
 
         # Calculate total bandwidth, maximum bandwidth, and bandwidth utilization, and check if bandwidth is exceeded
         total_bandwidth_kbps = tx_bandwidth_kbps + rx_bandwidth_kbps
-        maximum_bandwidth_kbps = list_of_maximum_bandwith.get(shaper, 0.0)
+        maximum_bandwidth_kbps = list_of_maximum_bandwidth.get(shaper, 0.0)
         bandwidth_utilization_percent = (
             (total_bandwidth_kbps / maximum_bandwidth_kbps * 100) if maximum_bandwidth_kbps else 0.0
         )

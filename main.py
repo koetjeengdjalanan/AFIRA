@@ -45,9 +45,10 @@ from lib.fortigate.metric_fetcher import (
     router_ipv4,
     vwan_interface_log,
     vwan_sla_logs,
-    traffic_history_interface
+    traffic_history_interface,
+    historical_statistics
 )
-from lib.fortigate.info_fetcher import ha_checksum, firmware
+from lib.fortigate.info_fetcher import ha_checksum, firmware, cooperative_security_fabric
 from lib.sites_details import alerts as site_alerts
 from lib.sites_details import clients_data, device_locations, web_app_data, wifi_clients_loc, wlan_trhougput_trends
 from models import EnvironmentsVariables, FortigateClient, HPEOAuth2Client
@@ -185,6 +186,24 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
                 f"License status fetcher failed with error: {e}. "
                 "Continuing with other fetchers."
             )
+        
+        # Cooperative Security Fabric (CSF)
+        try:
+            logger.info("Running cooperative security fabric fetcher")
+            _, csf_points = cooperative_security_fabric(
+                api_client=api_client,
+                vdom="root"
+            )
+            points.extend(csf_points)
+            logger.debug(
+                "Cooperative security fabric fetcher returned %s points",
+                len(csf_points),
+            )
+        except Exception as e:
+            logger.warning(
+                f"Cooperative security fabric fetcher failed with error: {e}. "
+                "Continuing with other fetchers."
+            )
            
         
         # Fetch per-VDOM data
@@ -193,7 +212,7 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
             # Firewall Traffic Shaper
             try:
                 logger.info(f"Running firewall traffic shaper fetcher for VDOM: {vdom}")
-                _, list_of_maximum_bandwith, traffic_shapper_points = firewall_traffic_shapper(
+                _, list_of_maximum_bandwidth, traffic_shapper_points = firewall_traffic_shapper(
                     api_client=api_client,
                     vdom=vdom,
                 )
@@ -256,7 +275,7 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
                 _, fortiview_points = fortiview_realtime_statistics(
                     api_client=api_client,
                     vdom=vdom,
-                    list_of_maximum_bandwith=list_of_maximum_bandwith
+                    list_of_maximum_bandwidth=list_of_maximum_bandwidth
                 )
                 points.extend(fortiview_points)
                 logger.debug(
@@ -267,6 +286,25 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
             except Exception as e:
                 logger.warning(
                     f"FortiView realtime statistics fetcher for VDOM {vdom} failed with error: {e}. "
+                    "Continuing with other VDOMs."
+                )
+            
+            # FortiView Historical Statistics
+            try:
+                logger.info(f"Running FortiView historical statistics fetcher for VDOM: {vdom}")
+                _, historical_stats_points = historical_statistics(
+                    api_client=api_client,
+                    vdom=vdom
+                )
+                points.extend(historical_stats_points)
+                logger.debug(
+                    "FortiView historical statistics fetcher for VDOM %s returned %s points",
+                    vdom,
+                    len(historical_stats_points),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"FortiView historical statistics fetcher for VDOM {vdom} failed with error: {e}. "
                     "Continuing with other VDOMs."
                 )
             
@@ -378,7 +416,7 @@ def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVa
             interface_name = interface.get("name", "unknown")
             interface_alias = interface.get("alias", "unknown")
             interface_vdom = interface.get("vdom", "unknown")
-            is_monitor_bandwidth_enable = True if interface.get("monitor-bandwith", "disable") == "enable" else False
+            is_monitor_bandwidth_enable = True if interface.get("monitor-bandwidth", "disable") == "enable" else False
             
             if not is_monitor_bandwidth_enable:
                 logger.info(
