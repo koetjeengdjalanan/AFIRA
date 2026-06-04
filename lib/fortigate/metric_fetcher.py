@@ -326,10 +326,10 @@ def fortiview_realtime_statistics(
     api_client: FortigateClient,
     vdom: str,
     list_of_maximum_bandwidth: dict[str, int],
+    report_by: str = "shaper",
     sort_by: str = "bandwidth",
     ip_version: str = "ipv4",
     count: int = 100,
-    report_by: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches FortiView realtime statistics from the Fortigate API.
@@ -346,6 +346,7 @@ def fortiview_realtime_statistics(
         tuple[list[dict[str, Any]], list[Point]]: A tuple containing FortiView realtime statistic dictionaries and InfluxDB points.
     """
     params: dict[str, str | int] = {
+        "report_by": report_by,
         "sort_by": sort_by,
         "ip_version": ip_version,
         "count": count,
@@ -376,11 +377,11 @@ def fortiview_realtime_statistics(
             continue
 
         sessions = detail.get("sessions", 0)
-        policy_ipver = detail.get("policy_ipver", "")
+        policy_ipver = detail.get("policy_ipver", "unknown")
         dst_port = detail.get("dst_port", 0)
         protocol = detail.get("protocol", 0)
-        srcintf = detail.get("srcintf", "")
-        dstintf = detail.get("dstintf", "")
+        srcintf = detail.get("srcintf", "unknown")
+        dstintf = detail.get("dstintf", "unknown")
         apps = detail.get("apps", [])
         shaper = detail.get("shaper", "unknown")
         sentbyte = detail.get("sentbyte", 0)
@@ -398,7 +399,8 @@ def fortiview_realtime_statistics(
 
         # Calculate total bandwidth, maximum bandwidth, and bandwidth utilization, and check if bandwidth is exceeded
         total_bandwidth_kbps = tx_bandwidth_kbps + rx_bandwidth_kbps
-        maximum_bandwidth_kbps = list_of_maximum_bandwidth.get(shaper, 0.0)
+        maximum_bandwidth = list_of_maximum_bandwidth.get(shaper, 0.0)
+        maximum_bandwidth_kbps = maximum_bandwidth / 1000 if maximum_bandwidth > 1000 else float(maximum_bandwidth)
         bandwidth_utilization_percent = (
             (total_bandwidth_kbps / maximum_bandwidth_kbps * 100) if maximum_bandwidth_kbps else 0.0
         )
