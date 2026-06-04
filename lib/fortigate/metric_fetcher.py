@@ -399,8 +399,7 @@ def fortiview_realtime_statistics(
 
         # Calculate total bandwidth, maximum bandwidth, and bandwidth utilization, and check if bandwidth is exceeded
         total_bandwidth_kbps = tx_bandwidth_kbps + rx_bandwidth_kbps
-        maximum_bandwidth = list_of_maximum_bandwidth.get(shaper, 0.0)
-        maximum_bandwidth_kbps = maximum_bandwidth / 1000 if maximum_bandwidth > 1000 else float(maximum_bandwidth)
+        maximum_bandwidth_kbps = list_of_maximum_bandwidth.get(shaper, 0.0)
         bandwidth_utilization_percent = (
             (total_bandwidth_kbps / maximum_bandwidth_kbps * 100) if maximum_bandwidth_kbps else 0.0
         )
