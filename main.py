@@ -486,70 +486,70 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
 
     test_db_setup(setting=env_vars.influxdb)
 
-    # with HPEOAuth2Client(**creds["new_central"]) as aruba_api:
-    #     logger.debug("Successfully authenticated with HPE Aruba Central API.")
-    #     logger.debug("Start main Fetchers loop")
-    #     for fetcher, func in fetcher_func.items():
-    #         try:
-    #             logger.info(f"Running fetcher: {fetcher}")
-    #             fetcher_items, fetcher_points = _require_fetcher_result(fetcher=fetcher, result=func(aruba_api))
-    #             res.update({fetcher: fetcher_items})
-    #             res_points.extend(fetcher_points)
-    #             logger.debug(f"Fetcher {fetcher} returned {len(fetcher_items)} items and {len(fetcher_points)} points")
-    #         except Exception as e:
-    #             logger.error(f"Fetcher {fetcher} failed with error: {e}. Aborting AFIRA run.")
-    #             raise
-    #     logger.debug("Start Site Details Fetchers loop")
-    #     for fetcher, func in site_details_func.items():
-    #         for site_id in cast(list[str], res["site_health"]):
-    #             try:
-    #                 logger.info(f"Running site details fetcher: {fetcher}")
-    #                 points = func(aruba_api, site_id)
-    #                 res_points.extend(points)
-    #                 logger.debug("Site details fetcher %s returned %s points: %s", fetcher, len(points), points)
-    #             except Exception as e:
-    #                 logger.warning(
-    #                     f"Site details fetcher {fetcher} failed with error: {e}. Continuing with other fetchers."
-    #                 )
-    #     logger.debug("Start Wlan Details Fetcher loop")
-    #     for wlan in cast(list[str], res["wlan_data"]):
-    #         try:
-    #             logger.info(f"Running WLAN details fetcher for WLAN: {wlan}")
-    #             points = wlan_trhougput_trends(aruba_api, wlan)
-    #             res_points.extend(points)
-    #             logger.debug("WLAN details fetcher for %s returned %s points: %s", wlan, len(points), points)
-    #         except Exception as e:
-    #             logger.warning(f"WLAN details fetcher for {wlan} failed with error: {e}. Continuing with other WLANs.")
-    #     logger.debug("Start Device Hw Details Fetcher loop")
-    #     for device in cast(list[dict[str, Any]], res["device_data"]):
-    #         serial_number = cast(str, device.get("serial_number", "unknown"))
-    #         try:
-    #             device_type = cast(str, device.get("device_type", "unknown"))
-    #             if device_type not in device_details_func:
-    #                 logger.warning(
-    #                     f"Device type {device_type} for device with serial number {serial_number} is not supported. "
-    #                     "Skipping device details fetchers for this device."
-    #                 )
-    #                 continue
-    #             for device_details, func in device_details_func.get(device_type, {}).items():
-    #                 logger.info(
-    #                     f"Running device details fetcher {device_details}"
-    #                     f"for device with serial number: {serial_number}"
-    #                 )
-    #                 points = func(aruba_api, serial_number)
-    #                 res_points.extend(points)
-    #                 logger.debug(
-    #                     "Device details fetcher %s for device %s returned %s points: %s",
-    #                     device_details,
-    #                     serial_number,
-    #                     len(points),
-    #                     points,
-    #                 )
-    #         except Exception as e:
-    #             logger.warning(
-    #                 f"Device details fetcher for {serial_number} failed with error: {e}."
-    #                 "Continuing with other devices."
-    #             )
+    with HPEOAuth2Client(**creds["new_central"]) as aruba_api:
+        logger.debug("Successfully authenticated with HPE Aruba Central API.")
+        logger.debug("Start main Fetchers loop")
+        for fetcher, func in fetcher_func.items():
+            try:
+                logger.info(f"Running fetcher: {fetcher}")
+                fetcher_items, fetcher_points = _require_fetcher_result(fetcher=fetcher, result=func(aruba_api))
+                res.update({fetcher: fetcher_items})
+                res_points.extend(fetcher_points)
+                logger.debug(f"Fetcher {fetcher} returned {len(fetcher_items)} items and {len(fetcher_points)} points")
+            except Exception as e:
+                logger.error(f"Fetcher {fetcher} failed with error: {e}. Aborting AFIRA run.")
+                raise
+        logger.debug("Start Site Details Fetchers loop")
+        for fetcher, func in site_details_func.items():
+            for site_id in cast(list[str], res["site_health"]):
+                try:
+                    logger.info(f"Running site details fetcher: {fetcher}")
+                    points = func(aruba_api, site_id)
+                    res_points.extend(points)
+                    logger.debug("Site details fetcher %s returned %s points: %s", fetcher, len(points), points)
+                except Exception as e:
+                    logger.warning(
+                        f"Site details fetcher {fetcher} failed with error: {e}. Continuing with other fetchers."
+                    )
+        logger.debug("Start Wlan Details Fetcher loop")
+        for wlan in cast(list[str], res["wlan_data"]):
+            try:
+                logger.info(f"Running WLAN details fetcher for WLAN: {wlan}")
+                points = wlan_trhougput_trends(aruba_api, wlan)
+                res_points.extend(points)
+                logger.debug("WLAN details fetcher for %s returned %s points: %s", wlan, len(points), points)
+            except Exception as e:
+                logger.warning(f"WLAN details fetcher for {wlan} failed with error: {e}. Continuing with other WLANs.")
+        logger.debug("Start Device Hw Details Fetcher loop")
+        for device in cast(list[dict[str, Any]], res["device_data"]):
+            serial_number = cast(str, device.get("serial_number", "unknown"))
+            try:
+                device_type = cast(str, device.get("device_type", "unknown"))
+                if device_type not in device_details_func:
+                    logger.warning(
+                        f"Device type {device_type} for device with serial number {serial_number} is not supported. "
+                        "Skipping device details fetchers for this device."
+                    )
+                    continue
+                for device_details, func in device_details_func.get(device_type, {}).items():
+                    logger.info(
+                        f"Running device details fetcher {device_details}"
+                        f"for device with serial number: {serial_number}"
+                    )
+                    points = func(aruba_api, serial_number)
+                    res_points.extend(points)
+                    logger.debug(
+                        "Device details fetcher %s for device %s returned %s points: %s",
+                        device_details,
+                        serial_number,
+                        len(points),
+                        points,
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Device details fetcher for {serial_number} failed with error: {e}."
+                    "Continuing with other devices."
+                )
     
     #TODO: Add fortigate fetcher private function
     res_points.extend(_run_fortigate_fetcher(credentials=creds, env_vars=env_vars, logger=logger))
