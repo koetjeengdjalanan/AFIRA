@@ -61,12 +61,14 @@ def ha_checksum(api_client: FortigateClient) -> tuple[list[dict[str, list[str]]]
     return ha_members, points
 
 
-def firmware(api_client: FortigateClient) -> tuple[dict[str, dict[str|int|bool]|list[dict[str, str|int]]], list[Point], list[Point]]:
+def firmware(api_client: FortigateClient) -> tuple[dict[str, Any], list[Point]]:
     """
     Fetches firmware information from the Fortigate API.
 
     Returns:
-        dict[str, dict[str|int|bool]|list[dict[str, str|int]]]: A dictionary containing firmware information.
+        tuple[dict[str, Any], list[Point]]: A tuple containing:
+            - A dictionary with firmware information.
+            - A list of InfluxDB Points indicating current firmware version and update availability.
     """
     res = api_client.get(
         "/api/v2/monitor/system/firmware",
@@ -83,15 +85,14 @@ def firmware(api_client: FortigateClient) -> tuple[dict[str, dict[str|int|bool]|
     available_firmware: list[dict[str, Any]] = firmware_info.get("available", [])
     
     last_new_version: dict[str, Any] = available_firmware[0] if available_firmware else {}
-    firmware_update_available_points: list[Point] = []
-    update_history_firmware_points: list[Point] = []
+    points: list[Point] = []
     
     update_history_firmware_point = (
         Point("firmware_update_history")
         .tag("serial_no", firmware_info.get("serial_no", "unknown"))
         .field("current_version", current_firmware.get("version", "unknown"))
     )
-    update_history_firmware_points.append(update_history_firmware_point)
+    points.append(update_history_firmware_point)
     
     if current_firmware and last_new_version:
         firmware_update_available_point = (
@@ -102,9 +103,9 @@ def firmware(api_client: FortigateClient) -> tuple[dict[str, dict[str|int|bool]|
             .field("is_update_available", 1 if current_firmware.get("version") != last_new_version.get("version") else 0)
             .field("release_notes", last_new_version.get("release_notes", ""))
         )
-        firmware_update_available_points.append(firmware_update_available_point)
+        points.append(firmware_update_available_point)
 
-    return firmware_info, firmware_update_available_points, update_history_firmware_points
+    return firmware_info, points
 
 
 def log_device_state(api_client: FortigateClient) -> tuple[dict[str, str|bool|dict[str, int|bool]], list[Point]]:
@@ -192,10 +193,7 @@ def log_device_state(api_client: FortigateClient) -> tuple[dict[str, str|bool|di
     return results, points
 
 
-def cooperative_security_fabric(
-    api_client: FortigateClient,
-    vdom: str,
-) -> tuple[dict[str, Any], list[Point]]:
+def cooperative_security_fabric(api_client: FortigateClient) -> tuple[dict[str, Any], list[Point]]:
     """
     Fetch Cooperative Security Fabric (CSF) information and convert it to
     InfluxDB Points ready for Grafana.
@@ -204,8 +202,6 @@ def cooperative_security_fabric(
     ----------
     api_client:
         An instance of FortigateClient used to reach the FortiOS REST API.
-    vdom:
-        The virtual domain context for the API call.
 
     Returns
     -------
@@ -222,7 +218,7 @@ def cooperative_security_fabric(
     """
     res = api_client.get(
         "/api/v2/monitor/system/csf",
-        params={"vdom": vdom, "scope": "vdom", "decode": "true"},
+        params={"vdom": "root", "scope": "vdom", "decode": "true"},
         verify=False,  # Self-signed cert — replace with a trusted CA in production
     )
     res_json: dict[str, Any] = res.json()
