@@ -17,6 +17,18 @@ def _env(loop_sleep_seconds: int) -> EnvironmentsVariables:
     return cast(EnvironmentsVariables, SimpleNamespace(loop_sleep_seconds=loop_sleep_seconds))
 
 
+def _run_env() -> EnvironmentsVariables:
+    """Return a minimal typed environment object for run_once tests."""
+    return cast(
+        EnvironmentsVariables,
+        SimpleNamespace(
+            loop_sleep_seconds=5,
+            debug_mode=False,
+            influxdb=SimpleNamespace(),
+        ),
+    )
+
+
 def test_successful_cycle_sleeps_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """A successful iteration should sleep before the next cycle."""
     shutdown_event = threading.Event()
@@ -82,3 +94,50 @@ def test_loop_sleep_seconds_reads_environment(monkeypatch: pytest.MonkeyPatch, t
 
     assert env_vars.loop_sleep_seconds == 42
     assert env_vars.logging.log_file_path.is_file()
+
+
+def test_run_once_skips_aruba_when_new_central_credentials_are_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_once should skip Aruba when the new_central credential block is missing."""
+    monkeypatch.setattr(main, "retrieve_creds", Mock(return_value={"fortigate": {"base_url": "https://x", "api_token": "token"}}))
+    monkeypatch.setattr(main, "test_db_setup", Mock())
+    aruba_mock: Mock = Mock(return_value=[])
+    fortigate_mock: Mock = Mock(return_value=[])
+    monkeypatch.setattr(main, "_run_aruba_fetcher", aruba_mock)
+    monkeypatch.setattr(main, "_run_fortigate_fetcher", fortigate_mock)
+    monkeypatch.setattr(main, "store_points", Mock(return_value=None))
+    monkeypatch.setattr(main.asyncio, "run", Mock(return_value=None))
+
+    result = main.run_once(env_vars=_run_env())
+
+    assert result == 0
+    aruba_mock.assert_not_called()
+    fortigate_mock.assert_called_once()
+
+
+def test_run_once_skips_fortigate_when_fortigate_credentials_are_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_once should skip Fortigate when the fortigate credential block is missing."""
+    monkeypatch.setattr(
+        main,
+        "retrieve_creds",
+        Mock(return_value={
+            "new_central": {
+                "token_url": "https://example.com/oauth2/token",
+                "base_url": "https://example.com",
+                "client_id": "00000000-0000-0000-0000-000000000000",
+                "client_secret": "secret",
+            },
+        }),
+    )
+    monkeypatch.setattr(main, "test_db_setup", Mock())
+    aruba_mock: Mock = Mock(return_value=[])
+    fortigate_mock: Mock = Mock(return_value=[])
+    monkeypatch.setattr(main, "_run_aruba_fetcher", aruba_mock)
+    monkeypatch.setattr(main, "_run_fortigate_fetcher", fortigate_mock)
+    monkeypatch.setattr(main, "store_points", Mock(return_value=None))
+    monkeypatch.setattr(main.asyncio, "run", Mock(return_value=None))
+
+    result = main.run_once(env_vars=_run_env())
+
+    assert result == 0
+    aruba_mock.assert_called_once()
+    fortigate_mock.assert_not_called()

@@ -24,6 +24,7 @@ from pydantic import (
     field_validator,
 )
 from requests import Response
+import requests
 from requests.exceptions import RequestException
 from requests_oauthlib.oauth2_session import OAuth2Session
 from tenacity import (
@@ -885,3 +886,290 @@ class HPEOAuth2Client(BaseModel):
             The response object returned by the underlying OAuth session.
         """
         return self.request("DELETE", self._build_url(endpoint), **kwargs)
+
+
+class FortigateClient(BaseModel):
+    """Authentication client for Fortigate API requests.
+
+    This model provides a simple interface for authenticating with a Fortigate device
+    using its API. It manages the authentication token and provides methods to make
+    authenticated requests to the Fortigate API.
+
+    Attributes:
+        base_url (HttpUrl): Base URL for the Fortigate API.
+        api_token (StrictStr): API token for authentication.
+
+    Example:
+        >>> client = FortigateClient(
+        ...     base_url="https://xx.xx.xx.xx",
+        ...     api_token="your_fortigate_api_token",
+        ... )
+        >>> response = client.post("/api/v2/monitor/system/status", json={})
+        >>> print(response.status_code)
+        200
+    """
+
+    base_url: HttpUrl
+    api_token: StrictStr
+    
+    refresh_margin_seconds: PositiveInt = 60
+    retry_attempts: PositiveInt = 3
+    retry_min_seconds: PositiveInt = 1
+    retry_max_seconds: PositiveInt = 30
+    
+    def __enter__(self) -> "FortigateClient":
+        """Return this client for context-manager use."""
+        return self
+    
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """No resources to clean up on exit."""
+        pass
+    
+    def _build_url(self, endpoint: str) -> str:
+        """Build an absolute API URL from the configured base URL and endpoint.
+
+        Args:
+            endpoint (str): Relative API endpoint, with or without a leading slash.
+
+        Returns:
+            Absolute API URL as a plain string suitable for ``requests``.
+        """
+        return f"{str(self.base_url).rstrip('/')}/{endpoint.lstrip('/')}"
+
+    @staticmethod
+    def _response_body_preview(response: Response, max_length: int = 500) -> str:
+        """Return a single-line response body preview suitable for logs.
+
+        Args:
+            response (Response): Response returned by the HTTP request.
+            max_length (int): Maximum preview length.
+
+        Returns:
+            Response text with newlines escaped and long values truncated.
+        """
+        body = response.text.replace("\n", "\\n")
+        if len(body) <= max_length:
+            return body
+        return f"{body[:max_length]}..."
+
+    @staticmethod
+    def _response_status(response: Response) -> str | None:
+        """Return the Fortigate response status when the body provides one.
+
+        Fortigate API responses follow the shape shown in ``example.fortigate_response.json``,
+        where the body contains a ``status`` field. This method reads that status without
+        treating non-JSON responses as retryable by itself.
+
+        Args:
+            response (Response): Response returned by the HTTP request.
+        Returns:
+            Uppercase Fortigate response status, or ``None`` when the field is absent.
+        """
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        status = payload.get("status")
+        return str(status).upper() if status is not None else None
+    
+    @classmethod
+    def _should_retry_response(cls, response: Response) -> bool:
+        """Return whether a Fortigate API response should be retried.
+
+        Args:
+            response (Response): Response returned by the HTTP request.
+
+        Returns:
+            ``True`` when the response is rate-limited, server-side, or carries
+            an error status code.
+        """
+        return cls._retry_response_reason(response) is not None
+    
+    @staticmethod
+    def _retry_request_context(retry_state: RetryCallState) -> tuple[str, str]:
+        """Return the HTTP method and URL for a retry attempt.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the active retry loop.
+        Returns:
+            Tuple of request method and URL when available.
+        """
+        method = str(retry_state.args[0]) if len(retry_state.args) >= 1 else "UNKNOWN"
+        url = str(retry_state.args[1]) if len(retry_state.args) >= 2 else "unknown-url"
+        return method, url
+    
+    @staticmethod
+    def _retry_sleep_seconds(retry_state: RetryCallState) -> float:
+        """Return the planned sleep before the next retry attempt.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the active retry loop.
+
+        Returns:
+            Planned sleep in seconds, or ``0.0`` when Tenacity has no next action.
+        """
+        if retry_state.next_action is None:
+            return 0.0
+        return float(retry_state.next_action.sleep)
+    
+    @classmethod
+    def _retry_response_reason(cls, response: Response) -> str | None:
+        """Return a human-readable retry reason for a response, if it is retryable.
+
+        Args:
+            response (Response): Response returned by the HTTP request.
+        Returns:
+            Retry reason text, or ``None`` when the response should not be retried.
+        """
+        status_code = response.status_code
+        if isinstance(status_code, int) and (status_code in {408, 409, 425, 429} or status_code >= 500):
+            return f"HTTP {status_code}"
+        
+        fortigate_status = cls._response_status(response)
+        if fortigate_status is not None and fortigate_status != "SUCCESS":
+            return f"Fortigate response status {fortigate_status}"
+        
+        return None
+    
+    def _log_retry_attempt(self, retry_state: RetryCallState) -> None:
+        """Log why Tenacity will retry a Fortigate API request.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the active retry loop.
+        """
+        logger = logging.getLogger("AFIRA.FortigateClient")
+        method, url = self._retry_request_context(retry_state)
+        next_attempt = retry_state.attempt_number + 1
+        sleep_seconds = self._retry_sleep_seconds(retry_state)
+        outcome = retry_state.outcome
+
+        if outcome is None:
+            logger.warning(
+                f"Fortigate API request attempt {retry_state.attempt_number}/{self.retry_attempts} failed without an outcome. "
+                f"Retrying attempt {next_attempt}/{self.retry_attempts} in {sleep_seconds:.2f} seconds: {method} {url}"
+            )
+            return
+
+        if outcome.failed:
+            exception = outcome.exception()
+            logger.warning(
+                f"Fortigate API request attempt {retry_state.attempt_number}/{self.retry_attempts} failed with {type(exception).__name__ if exception is not None else 'unknown exception'}: {exception}. "
+                f"Retrying attempt {next_attempt}/{self.retry_attempts} in {sleep_seconds:.2f} seconds: {method} {url}"
+            )
+            return
+
+        response = outcome.result()
+        retry_reason = self._retry_response_reason(response) or "retryable response"
+        logger.warning(
+            f"Fortigate API request attempt {retry_state.attempt_number}/{self.retry_attempts} returned {retry_reason}. "
+            f"Retrying attempt {next_attempt}/{self.retry_attempts} in {sleep_seconds:.2f} seconds: {method} {url}. Body: {self._response_body_preview(response)}"
+        )
+    
+    def _last_retry_result(self, retry_state: RetryCallState) -> Response:
+        """Return the final response after all response-based retries fail.
+
+        Args:
+            retry_state (RetryCallState): Tenacity state for the exhausted retry loop.
+        Returns:
+            Final response produced by the retried request call.
+        Raises:
+            RuntimeError: If Tenacity reaches this callback without a stored outcome.
+        """
+        outcome = retry_state.outcome
+        if outcome is None:
+            raise RuntimeError("Tenacity retry loop ended without a stored outcome")
+
+        logger = logging.getLogger("AFIRA.FortigateClient")
+        method, url = self._retry_request_context(retry_state)
+
+        if outcome.failed:
+            exception = outcome.exception()
+            exc_info: tuple[type[BaseException], BaseException, TracebackType | None] | None = (
+                (type(exception), exception, exception.__traceback__) if exception is not None else None
+            )
+            logger.error(
+                f"Fortigate API request failed after {retry_state.attempt_number}/{self.retry_attempts} attempts with {type(exception).__name__ if exception is not None else 'unknown exception'}: {exception}. Request: {method} {url}",
+                exc_info=exc_info,
+            )
+            return outcome.result()
+
+        response = outcome.result()
+        retry_reason = self._retry_response_reason(response) or "retryable response"
+        logger.error(
+            f"Fortigate API request still returned {retry_reason} after {retry_state.attempt_number}/{self.retry_attempts} attempts: {method} {url}. Body: {self._response_body_preview(response)}"
+        )
+        return response
+    
+    def _retrying(self) -> Retrying:
+        """Build the Tenacity retry controller for authenticated requests.
+
+        Returns:
+            Configured Tenacity ``Retrying`` instance using exponential backoff.
+        """
+        return Retrying(
+            retry=retry_if_exception_type(RequestException) | retry_if_result(self._should_retry_response),
+            stop=stop_after_attempt(self.retry_attempts),
+            wait=wait_exponential(min=self.retry_min_seconds, max=self.retry_max_seconds),
+            before_sleep=self._log_retry_attempt,
+            retry_error_callback=self._last_retry_result,
+            reraise=True,
+        )
+    
+    @staticmethod
+    def _send_request(method: Literal["GET", "POST"], url: str, **kwargs: Any) -> Response:
+        return requests.request(method, url, **kwargs)
+    
+    def request(
+        self,
+        method: Literal["GET", "POST"],
+        endpoint: str,
+        **kwargs: Any,
+    ) -> Response:
+        """Send an authenticated HTTP request to the Fortigate API.
+
+        Args:
+            method (Literal["GET", "POST"]): HTTP method to send, such as ``"GET"`` or ``"POST"``.
+            endpoint (str): The API endpoint for the target resource.
+            **kwargs: Additional keyword arguments forwarded to
+                :meth:`requests.request`.
+
+        Returns:
+            The response object returned by the underlying HTTP request.
+        """
+        url = self._build_url(endpoint)
+        headers = dict(kwargs.pop("headers", {}))
+        headers["Authorization"] = f"Bearer {self.api_token}"
+        return self._retrying()(self._send_request, method, url, headers=headers, **kwargs)
+    
+    def get(self, endpoint: str, **kwargs: Any) -> Response:
+        """Send an authenticated ``GET`` request to the Fortigate API.
+
+        Args:
+            endpoint (str): The API endpoint for the target resource.
+            **kwargs: Additional request options forwarded to :meth:`requests.get`.
+
+        Returns:
+            The response object returned by the underlying HTTP request.
+        """
+        return self.request("GET", endpoint, **kwargs)
+    
+    def post(self, endpoint: str, **kwargs: Any) -> Response:
+        """Send an authenticated ``POST`` request to the Fortigate API.
+
+        Args:
+            endpoint (str): The API endpoint for the target resource.
+            **kwargs: Additional request options forwarded to :meth:`requests.post`.
+
+        Returns:
+            The response object returned by the underlying HTTP request.
+        """
+        return self.request("POST", endpoint, **kwargs)

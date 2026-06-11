@@ -1,6 +1,7 @@
 """AFIRA Main Module."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import queue
 import signal
@@ -11,6 +12,7 @@ from typing import Any, Callable, cast
 
 from humanize import precisedelta
 from influxdb_client.client.write.point import Point
+from lib.fortigate.log_fetcher import log_disk_event_system
 from rich.console import Console
 
 from config.context import logging_context
@@ -29,14 +31,39 @@ from lib.device_details import (
     switch_data,
     switch_hw_data,
 )
+
+from lib.fortigate.config_fetcher import (
+    firewall_traffic_shapper,
+    sdwan_health_check,
+    system_interface,
+    vdoms
+)
+from lib.fortigate.metric_fetcher import (
+    system_resource_usage, 
+    license_status, 
+    vwan_health_check, 
+    fortiview_realtime_statistics, 
+    vwan_interface_log,
+    vwan_sla_logs,
+    traffic_history_interface,
+    historical_statistics
+)
+from lib.fortigate.info_fetcher import ha_checksum, firmware, cooperative_security_fabric
 from lib.sites_details import alerts as site_alerts
 from lib.sites_details import clients_data, device_locations, web_app_data, wifi_clients_loc, wlan_trhougput_trends
-from models import EnvironmentsVariables, HPEOAuth2Client
+from models import EnvironmentsVariables, FortigateClient, HPEOAuth2Client
 
 FetcherItems = list[str] | list[dict[str, Any]]
 FetcherResult = tuple[FetcherItems, list[Point]]
 FetcherReturn = tuple[FetcherItems | None, list[Point] | None] | None
 FetcherFunction = Callable[[HPEOAuth2Client], FetcherReturn]
+
+FortigateFetcherFunction = Callable[[FortigateClient], FetcherResult]
+FortigateVdomFetcherFunction = Callable[[FortigateClient, str], FetcherResult]
+FortigateDependantVdomFetcherFunction = Callable[[FortigateClient, str, dict[str, Any]], FetcherResult]
+FortigateInterfaceFetcherFunction = Callable[[FortigateClient, str, str, str], FetcherResult]
+FortigateHAMemberFetcherFunction = Callable[[FortigateClient, str, list[str], int], FetcherResult]
+
 ShutdownSignalHandler = Callable[[int, FrameType | None], None]
 
 
@@ -54,10 +81,205 @@ def _require_fetcher_result(fetcher: str, result: FetcherReturn) -> FetcherResul
     return fetcher_items, fetcher_points
 
 
-def run_once(env_vars: EnvironmentsVariables) -> int:
-    """Run one AFIRA collection cycle and return the number of collected points."""
-    logger = logging.getLogger("AFIRA.Main")
-    creds: dict[str, Any] = retrieve_creds()
+def _has_required_credentials(credentials: dict[str, Any], section: str, required_keys: tuple[str, ...]) -> bool:
+    """Return True when a credential section exists and contains all required values."""
+    section_credentials = credentials.get(section)
+    if not isinstance(section_credentials, dict) or not section_credentials:
+        return False
+
+    return all(bool(section_credentials.get(key)) for key in required_keys)
+
+
+def _run_fortigate_fetcher(credentials: dict[str, Any], env_vars: EnvironmentsVariables, logger: logging.Logger) -> list[Point]:
+    """
+    Run the Fortigate fetcher and return its results.
+    
+    Args:
+        credentials (dict[str, Any]): A dictionary containing the credentials for the Fortigate API.
+        logger (logging.Logger): A logger instance for logging.
+    
+    Returns:
+        list[Point]: A list of InfluxDB points collected from the Fortigate API.
+    """
+    res_points: list[Point] = []
+    res: dict[str, FetcherItems] = {}
+    global_fetchers: dict[str, FortigateFetcherFunction] = {
+        "vdoms": vdoms,
+        "ha_checksum": ha_checksum,
+        "system_interface": system_interface,
+        "firmware": firmware,
+        "license_status": license_status,
+        "cooperative_security_fabric": cooperative_security_fabric,
+    }
+    vdom_specific_fetchers: dict[str, FortigateVdomFetcherFunction] = {
+        "firewall_traffic_shapper": firewall_traffic_shapper,
+        "sdwan_health_check": sdwan_health_check,
+        "historical_statistics": historical_statistics,
+        "system_resource_usage": system_resource_usage,
+        "vwan_interface_log": vwan_interface_log,
+    }
+    dependant_vdom_specific_fetchers: dict[str, FortigateDependantVdomFetcherFunction] = {
+        "fortiview_realtime_statistics": fortiview_realtime_statistics,
+        "vwan_health_check": vwan_health_check,
+        "vwan_sla_logs": vwan_sla_logs,
+    }
+    interface_specific_fetchers: dict[str, FortigateInterfaceFetcherFunction] = {
+        "traffic_history_interface": traffic_history_interface,
+    }
+    ha_member_specific_fetchers: dict[str, FortigateHAMemberFetcherFunction] = {
+        "log_disk_event_system": log_disk_event_system,
+    }
+    
+    with FortigateClient(**credentials["fortigate"]) as api_client:
+        logger.debug("Successfully authenticated with Fortigate API.")
+        
+        logger.debug("Start global fetchers loop")
+        for fetcher, func in global_fetchers.items():
+            try:
+                logger.info(f"Running fetcher: {fetcher}")
+                fetcher_items, fetcher_points = _require_fetcher_result(fetcher=fetcher, result=func(api_client))
+                res.update({fetcher: fetcher_items})
+                res_points.extend(fetcher_points)
+                logger.debug(
+                    "Fetcher %s returned %s items and %s points", 
+                    fetcher, 
+                    len(fetcher_items), 
+                    len(fetcher_points)
+                )
+            except Exception as e:
+                logger.error(f"Fetcher {fetcher} failed with error: {e}. Aborting AFIRA run.")
+                raise
+        
+        logger.debug("Start VDOM-specific fetchers loop")
+        for vdom in cast(list[str], res.get("vdoms", [])):
+            vdom_res: dict[str, FetcherItems] = {}
+            
+            for fetcher, func in vdom_specific_fetchers.items():
+                try:
+                    logger.info(f"Running VDOM-specific fetcher: {fetcher} for VDOM: {vdom}")
+                    fetcher_items, fetcher_points = _require_fetcher_result(
+                        fetcher=fetcher, 
+                        result=func(api_client=api_client, vdom=vdom)
+                    )
+                    vdom_res.update({fetcher: fetcher_items})
+                    res_points.extend(fetcher_points)
+                    logger.debug(
+                        "VDOM-specific Fetcher %s for VDOM %s returned %s items and %s points", 
+                        fetcher, 
+                        vdom, 
+                        len(fetcher_items), 
+                        len(fetcher_points)
+                    )
+                except Exception as e:
+                    logger.warning(f"VDOM-specific Fetcher {fetcher} for VDOM {vdom} failed with error: {e}. Continuing with other fetchers.")
+
+            sla_configuration = cast(list[Any], vdom_res.get("sdwan_health_check", []))
+            list_of_maximum_bandwidth = cast(list[Any], vdom_res.get("firewall_traffic_shapper", []))
+            
+            # Run VDOM-specific fetchers that require data from other VDOM-specific fetchers
+            for fetcher, func in dependant_vdom_specific_fetchers.items():
+                dependency = {"sla_configuration": sla_configuration} if fetcher in ["vwan_health_check", "vwan_sla_logs"] else {"list_of_maximum_bandwidth": list_of_maximum_bandwidth}
+                
+                try:
+                    logger.info(f"Running VDOM-specific fetcher: {fetcher} for VDOM: {vdom}")
+                    _, fetcher_points = _require_fetcher_result(
+                        fetcher=fetcher, 
+                        result=func(api_client=api_client, vdom=vdom, **dependency)
+                    )
+                    res_points.extend(fetcher_points)
+                    logger.debug(
+                        "Fetcher %s for VDOM %s returned %s points", 
+                        fetcher, 
+                        vdom, 
+                        len(fetcher_points)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Fetcher %s for VDOM %s failed with error: %s. Continuing with other VDOMs.", 
+                        fetcher, 
+                        vdom, 
+                        e
+                    )
+        
+        logger.debug("Start HA member-specific fetchers loop")
+        for member in cast(list[dict[str, Any]], res.get("ha_checksum", [])):
+            serial_no = member.get("serial_no", "unknown")
+            vdoms_for_member = member.get("vdoms", [])
+            
+            for fetcher, func in ha_member_specific_fetchers.items():
+                try:
+                    logger.info(f"Running HA member-specific fetcher: {fetcher} for HA member with serial number: {serial_no}")
+                    _, fetcher_points = _require_fetcher_result(
+                        fetcher=fetcher, 
+                        result=func(
+                            api_client=api_client, 
+                            serial_no=serial_no, 
+                            vdoms=vdoms_for_member, 
+                            interval_s=env_vars.loop_sleep_seconds
+                        )
+                    )
+                    res_points.extend(fetcher_points)
+                    logger.debug(
+                        "HA member-specific Fetcher %s for HA member with serial number %s returned %s points", 
+                        fetcher, 
+                        serial_no, 
+                        len(fetcher_points)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "HA member-specific Fetcher %s for HA member with serial number %s failed with error: %s. Continuing with other HA members.", 
+                        fetcher, 
+                        serial_no, 
+                        e
+                    )
+        
+        logger.debug("Start interface-specific fetchers loop")
+        for interface in cast(list[dict[str, Any]], res.get("system_interface", [])):
+            interface_name = interface.get("name", "unknown")
+            interface_alias = interface.get("alias", "unknown")
+            interface_vdom = interface.get("vdom", "unknown")
+            is_monitor_bandwidth_enable = True if interface.get("monitor-bandwidth", "disable") == "enable" else False
+            
+            if not is_monitor_bandwidth_enable:
+                logger.info(
+                    f"Skipping interface-specific fetchers for interface: {interface_name} in VDOM: {interface_vdom} "
+                    "because bandwidth monitoring is disabled."
+                )
+                continue
+            
+            for fetcher, func in interface_specific_fetchers.items():
+                try:
+                    logger.info(f"Running interface-specific fetcher: {fetcher} for interface: {interface_name} in VDOM: {interface_vdom}")
+                    _, fetcher_points = _require_fetcher_result(
+                        fetcher=fetcher, 
+                        result=func(
+                            api_client=api_client, 
+                            vdom=interface_vdom, 
+                            interface_name=interface_name, 
+                            interface_alias=interface_alias
+                        )
+                    )
+                    res_points.extend(fetcher_points)
+                    logger.debug(
+                        "Interface-specific Fetcher %s for interface %s in VDOM %s returned %s points", 
+                        fetcher, 
+                        interface_name, 
+                        interface_vdom, 
+                        len(fetcher_points)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Interface-specific Fetcher %s for interface %s in VDOM %s failed with error: %s. Continuing with other interfaces.", 
+                        fetcher, 
+                        interface_name, 
+                        interface_vdom, 
+                        e
+                    )
+                      
+    return res_points
+    
+
+def _run_aruba_fetcher(credentials: dict[str, Any], logger: logging.Logger) -> list[Point]:
     res_points: list[Point] = []
     res: dict[str, FetcherItems] = {}
     fetcher_func: dict[str, FetcherFunction] = {
@@ -89,9 +311,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
         },
     }
 
-    test_db_setup(setting=env_vars.influxdb)
-
-    with HPEOAuth2Client(**creds["new_central"]) as aruba_api:
+    with HPEOAuth2Client(**credentials["new_central"]) as aruba_api:
         logger.debug("Successfully authenticated with HPE Aruba Central API.")
         logger.debug("Start main Fetchers loop")
         for fetcher, func in fetcher_func.items():
@@ -138,7 +358,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
                     continue
                 for device_details, func in device_details_func.get(device_type, {}).items():
                     logger.info(
-                        f"Running device details fetcher {device_details} "
+                        f"Running device details fetcher {device_details}"
                         f"for device with serial number: {serial_number}"
                     )
                     points = func(aruba_api, serial_number)
@@ -152,9 +372,53 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
                     )
             except Exception as e:
                 logger.warning(
-                    f"Device details fetcher for {serial_number} failed with error: {e}. "
+                    f"Device details fetcher for {serial_number} failed with error: {e}."
                     "Continuing with other devices."
                 )
+    
+    return res_points
+
+
+def run_once(env_vars: EnvironmentsVariables) -> int:
+    """Run one AFIRA collection cycle and return the number of collected points."""
+    logger = logging.getLogger("AFIRA.Main")
+    creds: dict[str, Any] = retrieve_creds()
+    res_points: list[Point] = []
+    
+    test_db_setup(setting=env_vars.influxdb)
+    
+    fetcher_tasks: dict[str, Callable[[], list[Point]]] = {}
+
+    if _has_required_credentials(creds, "new_central", ("token_url", "base_url", "client_id", "client_secret")):
+        fetcher_tasks["aruba"] = lambda: _run_aruba_fetcher(credentials=creds, logger=logger)
+    else:
+        logger.warning("Skipping Aruba fetcher because new_central credentials are missing or incomplete.")
+
+    if _has_required_credentials(creds, "fortigate", ("base_url", "api_token")):
+        fetcher_tasks["fortigate"] = lambda: _run_fortigate_fetcher(credentials=creds, env_vars=env_vars, logger=logger)
+    else:
+        logger.warning("Skipping Fortigate fetcher because fortigate credentials are missing or incomplete.")
+
+    if not fetcher_tasks:
+        logger.warning("No valid credentials were found. Skipping all fetchers.")
+        logger.debug("Finished all fetchers. Total points collected: %s", len(res_points))
+        return len(res_points)
+
+    with ThreadPoolExecutor(max_workers=len(fetcher_tasks), thread_name_prefix="AFIRA-Fetcher") as executor:
+        futures = {executor.submit(task): fetcher_name for fetcher_name, task in fetcher_tasks.items()}
+
+        for future in as_completed(futures):
+            fetcher_name = futures[future]
+            try:
+                fetcher_points = future.result()
+                res_points.extend(fetcher_points)
+                logger.info("Fetcher %s completed with %s points.", fetcher_name, len(fetcher_points))
+            except Exception:
+                logger.exception("Fetcher %s failed. Aborting AFIRA run.", fetcher_name)
+                for pending_future in futures:
+                    if pending_future is not future:
+                        pending_future.cancel()
+                raise
 
     logger.info("Finished all fetchers. Storing points in InfluxDB...")
     _ = asyncio.run(store_points(points=res_points, influx_conf=env_vars.influxdb, debug_mode=env_vars.debug_mode))
