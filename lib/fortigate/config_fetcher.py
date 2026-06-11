@@ -108,7 +108,7 @@ def vdoms(api_client: FortigateClient) -> tuple[list[str], list[Point]]:
     return vdom_list, vdom_history_points
 
 
-def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], dict[str, int], list[Point]]:
+def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[dict[str, int], list[Point]]:
     """
     Fetches firewall traffic shaper information from the Fortigate API.
 
@@ -117,7 +117,7 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[li
         vdom (str): The VDOM for which to fetch the traffic shaper information.
         
     Returns:
-        tuple[list[dict[str, Any]], dict[str, int], list[Point]]: A tuple containing a list of dictionaries with firewall traffic shaper information and a list of InfluxDB points.
+        tuple[dict[str, int], list[Point]]: A tuple containing a dictionary with maximum bandwidth information and a list of InfluxDB points.
     """
     traffic_shapers: list[dict[str, Any]] = []
     list_of_maximum_bandwidth: dict[str, int] = {}
@@ -213,10 +213,10 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[li
 
         start = next_idx
     
-    return traffic_shapers, list_of_maximum_bandwidth, points
+    return list_of_maximum_bandwidth, points
 
 
-def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, Any]], list[Point]]:
+def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[dict[str, Any], list[Point]]:
     """
     Fetches SD-WAN health check information from the Fortigate API.
 
@@ -225,7 +225,7 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dic
         vdom (str): The VDOM for which to fetch the SD-WAN health check information.
         
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of dictionaries with SD-WAN health check information and a list of InfluxDB points.
+        tuple[dict[str, Any], list[Point]]: A tuple containing a dictionary with SD-WAN health check information and a list of InfluxDB points.
     """
     health_checks: list[dict[str, Any]] = []
     sla_configuration: dict[str, Any] = {}
@@ -405,5 +405,5 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[list[dic
 
         start = next_idx
 
-    return health_checks, sla_configuration, points
+    return sla_configuration, points
 
