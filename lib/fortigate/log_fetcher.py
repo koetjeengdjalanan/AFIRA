@@ -1,3 +1,5 @@
+"""Fortigate log fetcher for disk event system logs."""
+
 import time
 from typing import Any
 
@@ -13,6 +15,19 @@ def log_disk_event_system(
     vdoms: list[str],
     interval_s: int = 300,
 ) -> tuple[list[dict[str, Any]], list[Point]]:
+    """
+    Fetch critical system events from the disk log for the given HA member and VDOMs.
+
+    Args:
+        api_client: An instance of FortigateClient to make API calls.
+        serial_no: The serial number of the HA member to fetch logs for.
+        vdoms: A list of VDOM names to fetch logs from.
+        interval_s: The time interval in seconds to look back for logs (default is 300 seconds).
+
+    Returns:
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of log entries
+            as dictionaries and a list of InfluxDB Point objects for the logs.
+    """
     log_items: list[dict[str, Any]] = []
     points: list[Point] = []
 

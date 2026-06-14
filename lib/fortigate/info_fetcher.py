@@ -1,8 +1,11 @@
+"""Fortigate info fetchers: HA checksum, firmware, log device state, and CSF."""
+
 from typing import Any
 
 from influxdb_client.client.write.point import Point
 
 from models import FortigateClient
+
 
 def ha_checksum(api_client: FortigateClient) -> tuple[list[dict[str, list[str]]], list[Point]]:
     """
@@ -40,7 +43,11 @@ def ha_checksum(api_client: FortigateClient) -> tuple[list[dict[str, list[str]]]
         serial_no = item.get("serial_no", "unknown")
         is_primary = item.get("is_manage_primary", False)
         member_checksum = item.get("checksum", {}).get("all", "")
-        vdoms = item.get("checksum", {}).get("vdoms", {}).keys() if "checksum" in item and "vdoms" in item["checksum"] else []
+        vdoms = (
+            item.get("checksum", {}).get("vdoms", {}).keys()
+            if "checksum" in item and "vdoms" in item["checksum"]
+            else []
+        )
 
         # Primary is always considered synced; secondary is synced if its checksum matches primary
         is_synced = is_primary or (member_checksum == primary_checksum and primary_checksum != "")
@@ -83,24 +90,27 @@ def firmware(api_client: FortigateClient) -> tuple[dict[str, Any], list[Point]]:
     firmware_info: dict[str, Any] = res_json.get("results", {})
     current_firmware: dict[str, Any] = firmware_info.get("current", {})
     available_firmware: list[dict[str, Any]] = firmware_info.get("available", [])
-    
+
     last_new_version: dict[str, Any] = available_firmware[0] if available_firmware else {}
     points: list[Point] = []
-    
+
     update_history_firmware_point = (
         Point("firmware_update_history")
         .tag("serial_no", firmware_info.get("serial_no", "unknown"))
         .field("current_version", current_firmware.get("version", "unknown"))
     )
     points.append(update_history_firmware_point)
-    
+
     if current_firmware and last_new_version:
         firmware_update_available_point = (
             Point("firmware_update_available")
             .tag("serial_no", firmware_info.get("serial_no", "unknown"))
             .tag("current_version", current_firmware.get("version", "unknown"))
             .tag("available_version", last_new_version.get("version", "unknown"))
-            .field("is_update_available", 1 if current_firmware.get("version") != last_new_version.get("version") else 0)
+            .field(
+                "is_update_available",
+                1 if current_firmware.get("version") != last_new_version.get("version") else 0,
+            )
             .field("release_notes", last_new_version.get("release_notes", ""))
         )
         points.append(firmware_update_available_point)
@@ -114,7 +124,7 @@ def log_device_state(api_client: FortigateClient) -> tuple[dict[str, str|bool|di
 
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
-    
+
     Returns:
         tuple[dict[str, str|bool|dict[str, int|bool]], list[Point]]: A tuple containing:
             - A dictionary with log device state information.
@@ -172,7 +182,10 @@ def log_device_state(api_client: FortigateClient) -> tuple[dict[str, str|bool|di
 
         # fortianalyzer_cloud-specific field
         if device == "fortianalyzer_cloud":
-            point = point.field("overrides_global_faz_cloud", 1 if device_info.get("overrides_global_faz_cloud", False) else 0)
+            point = point.field(
+                "overrides_global_faz_cloud",
+                1 if device_info.get("overrides_global_faz_cloud", False) else 0,
+            )
 
         # forticloud-specific field
         if device == "forticloud":
@@ -195,26 +208,17 @@ def log_device_state(api_client: FortigateClient) -> tuple[dict[str, str|bool|di
 
 def cooperative_security_fabric(api_client: FortigateClient) -> tuple[dict[str, Any], list[Point]]:
     """
-    Fetch Cooperative Security Fabric (CSF) information and convert it to
-    InfluxDB Points ready for Grafana.
+    Fetch Cooperative Security Fabric (CSF) information and convert it to InfluxDB Points.
 
-    Parameters
-    ----------
-    api_client:
-        An instance of FortigateClient used to reach the FortiOS REST API.
+    Args:
+        api_client (FortigateClient): An instance of FortigateClient used to reach the FortiOS REST API.
 
-    Returns
-    -------
-    csf_data:
-        Raw parsed results dict (``protocol_enabled`` + ``devices`` list).
-    points:
-        InfluxDB Points covering device info, state, HA, VDOM counts/features,
-        and the global CSF protocol status.
+    Returns:
+        tuple[dict[str, Any], list[Point]]: Raw parsed results dict and a list of InfluxDB Points
+            covering device info, state, HA, VDOM counts/features, and the global CSF protocol status.
 
-    Raises
-    ------
-    Exception
-        If the HTTP call fails or the response is missing the ``results`` key.
+    Raises:
+        Exception: If the HTTP call fails or the response is missing the ``results`` key.
     """
     res = api_client.get(
         "/api/v2/monitor/system/csf",
@@ -247,20 +251,19 @@ def cooperative_security_fabric(api_client: FortigateClient) -> tuple[dict[str, 
 
     return csf_data, points
 
+
 def _device_info_point(device: dict[str, Any]) -> list[Point]:
     """
-    fortigate_csf_device_info
-    -------------------------
-    Static identity + firmware version.  Write on change only (compare
-    ``firmware_version_build`` between polls and skip when identical).
+    Build a ``fortigate_csf_device_info`` Point with static identity and firmware version.
 
-    Tags        : serial_no, hostname, model_name, model_number, device_type,
-                  ha_mode, ha_group_name
-    Fields      : fw_major, fw_minor, fw_patch, fw_build,
-                  is_ha_master, ha_group_id, is_vm, limited_ram
+    Tags: serial_no, hostname, model_name, model_number, device_type.
+    Fields: fw_major, fw_minor, fw_patch, fw_build.
 
-    Grafana     : Inventory table, firmware version stat panel,
-                  HA role indicator.
+    Args:
+        device (dict[str, Any]): A dictionary containing device information from the CSF API response.
+
+    Returns:
+        list[Point]: A list containing a single InfluxDB Point with device information.
     """
     serial = device.get("serial", "unknown")
     hostname = device.get("host_name", "unknown")
@@ -291,7 +294,13 @@ def _device_info_point(device: dict[str, Any]) -> list[Point]:
 
 
 def _device_state_point(device: dict[str, Any]) -> list[Point]:
-    """
+    """Build a ``fortigate_csf_device_uptime`` Point from the device state.
+
+    Args:
+        device (dict[str, Any]): A dictionary containing device information from the CSF API response.
+
+    Returns:
+        list[Point]: A list containing a single InfluxDB Point with device uptime information.
     """
     serial = device.get("serial", "unknown")
 
