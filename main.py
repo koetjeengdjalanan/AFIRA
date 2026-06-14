@@ -512,10 +512,3 @@ if __name__ == "__main__":
             raise SystemExit(1) from e
         finally:
             log.info("AFIRA shutdown complete.")
-        try:
-            run_forever(env_vars=env_vars, shutdown_event=shutdown_event)
-        except Exception as e:
-            log.critical(msg=f"AFIRA encountered a critical error: {e}", exc_info=True, stack_info=True)
-            raise SystemExit(1) from e
-        finally:
-            log.info("AFIRA shutdown complete.")
