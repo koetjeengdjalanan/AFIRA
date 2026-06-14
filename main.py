@@ -53,7 +53,7 @@ from lib.sites_details import alerts as site_alerts
 from lib.sites_details import clients_data, device_locations, web_app_data, wifi_clients_loc, wlan_trhougput_trends
 from models import EnvironmentsVariables, FortigateClient, HPEOAuth2Client
 
-FetcherItems = list[str] | list[dict[str, Any]]
+FetcherItems = list[str] | list[dict[str, Any]] | dict[str, Any]
 FetcherResult = tuple[FetcherItems, list[Point]]
 FetcherReturn = tuple[FetcherItems | None, list[Point] | None] | None
 FetcherFunction = Callable[[HPEOAuth2Client], FetcherReturn]
