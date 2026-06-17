@@ -7,7 +7,9 @@ from os import getenv
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, Optional, cast
+from warnings import catch_warnings, simplefilter
 
+import requests
 from oauthlib.oauth2.rfc6749.clients.backend_application import BackendApplicationClient
 from pydantic import (
     UUID4,
@@ -24,7 +26,6 @@ from pydantic import (
     field_validator,
 )
 from requests import Response
-import requests
 from requests.exceptions import RequestException
 from requests_oauthlib.oauth2_session import OAuth2Session
 from tenacity import (
@@ -35,6 +36,7 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+from urllib3.exceptions import InsecureRequestWarning
 
 from helper.default_handler import create_filedir
 
@@ -911,16 +913,16 @@ class FortigateClient(BaseModel):
 
     base_url: HttpUrl
     api_token: StrictStr
-    
+
     refresh_margin_seconds: PositiveInt = 60
     retry_attempts: PositiveInt = 3
     retry_min_seconds: PositiveInt = 1
     retry_max_seconds: PositiveInt = 30
-    
+
     def __enter__(self) -> "FortigateClient":
         """Return this client for context-manager use."""
         return self
-    
+
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
@@ -929,7 +931,7 @@ class FortigateClient(BaseModel):
     ) -> None:
         """No resources to clean up on exit."""
         pass
-    
+
     def _build_url(self, endpoint: str) -> str:
         """Build an absolute API URL from the configured base URL and endpoint.
 
@@ -967,6 +969,7 @@ class FortigateClient(BaseModel):
 
         Args:
             response (Response): Response returned by the HTTP request.
+
         Returns:
             Uppercase Fortigate response status, or ``None`` when the field is absent.
         """
@@ -980,7 +983,7 @@ class FortigateClient(BaseModel):
 
         status = payload.get("status")
         return str(status).upper() if status is not None else None
-    
+
     @classmethod
     def _should_retry_response(cls, response: Response) -> bool:
         """Return whether a Fortigate API response should be retried.
@@ -993,20 +996,21 @@ class FortigateClient(BaseModel):
             an error status code.
         """
         return cls._retry_response_reason(response) is not None
-    
+
     @staticmethod
     def _retry_request_context(retry_state: RetryCallState) -> tuple[str, str]:
         """Return the HTTP method and URL for a retry attempt.
 
         Args:
             retry_state (RetryCallState): Tenacity state for the active retry loop.
+
         Returns:
             Tuple of request method and URL when available.
         """
         method = str(retry_state.args[0]) if len(retry_state.args) >= 1 else "UNKNOWN"
         url = str(retry_state.args[1]) if len(retry_state.args) >= 2 else "unknown-url"
         return method, url
-    
+
     @staticmethod
     def _retry_sleep_seconds(retry_state: RetryCallState) -> float:
         """Return the planned sleep before the next retry attempt.
@@ -1020,26 +1024,27 @@ class FortigateClient(BaseModel):
         if retry_state.next_action is None:
             return 0.0
         return float(retry_state.next_action.sleep)
-    
+
     @classmethod
     def _retry_response_reason(cls, response: Response) -> str | None:
         """Return a human-readable retry reason for a response, if it is retryable.
 
         Args:
             response (Response): Response returned by the HTTP request.
+
         Returns:
             Retry reason text, or ``None`` when the response should not be retried.
         """
         status_code = response.status_code
         if isinstance(status_code, int) and (status_code in {408, 409, 425, 429} or status_code >= 500):
             return f"HTTP {status_code}"
-        
+
         fortigate_status = cls._response_status(response)
         if fortigate_status is not None and fortigate_status != "SUCCESS":
             return f"Fortigate response status {fortigate_status}"
-        
+
         return None
-    
+
     def _log_retry_attempt(self, retry_state: RetryCallState) -> None:
         """Log why Tenacity will retry a Fortigate API request.
 
@@ -1054,15 +1059,17 @@ class FortigateClient(BaseModel):
 
         if outcome is None:
             logger.warning(
-                f"Fortigate API request attempt {retry_state.attempt_number}/{self.retry_attempts} failed without an outcome. "
-                f"Retrying attempt {next_attempt}/{self.retry_attempts} in {sleep_seconds:.2f} seconds: {method} {url}"
+                f"Fortigate API request attempt {retry_state.attempt_number}/{self.retry_attempts} failed without "
+                f"an outcome. Retrying attempt {next_attempt}/{self.retry_attempts} in {sleep_seconds:.2f} "
+                f"seconds: {method} {url}"
             )
             return
 
         if outcome.failed:
             exception = outcome.exception()
             logger.warning(
-                f"Fortigate API request attempt {retry_state.attempt_number}/{self.retry_attempts} failed with {type(exception).__name__ if exception is not None else 'unknown exception'}: {exception}. "
+                f"Fortigate API request attempt {retry_state.attempt_number}/{self.retry_attempts} failed "
+                f"with {type(exception).__name__ if exception is not None else 'unknown exception'}: {exception}. "
                 f"Retrying attempt {next_attempt}/{self.retry_attempts} in {sleep_seconds:.2f} seconds: {method} {url}"
             )
             return
@@ -1070,17 +1077,20 @@ class FortigateClient(BaseModel):
         response = outcome.result()
         retry_reason = self._retry_response_reason(response) or "retryable response"
         logger.warning(
-            f"Fortigate API request attempt {retry_state.attempt_number}/{self.retry_attempts} returned {retry_reason}. "
-            f"Retrying attempt {next_attempt}/{self.retry_attempts} in {sleep_seconds:.2f} seconds: {method} {url}. Body: {self._response_body_preview(response)}"
+            f"Fortigate API request attempt {retry_state.attempt_number}/{self.retry_attempts} returned {retry_reason}."
+            f" Retrying attempt {next_attempt}/{self.retry_attempts} in {sleep_seconds:.2f} seconds: {method} {url}. "
+            f"Body: {self._response_body_preview(response)}"
         )
-    
+
     def _last_retry_result(self, retry_state: RetryCallState) -> Response:
         """Return the final response after all response-based retries fail.
 
         Args:
             retry_state (RetryCallState): Tenacity state for the exhausted retry loop.
+
         Returns:
             Final response produced by the retried request call.
+
         Raises:
             RuntimeError: If Tenacity reaches this callback without a stored outcome.
         """
@@ -1097,7 +1107,9 @@ class FortigateClient(BaseModel):
                 (type(exception), exception, exception.__traceback__) if exception is not None else None
             )
             logger.error(
-                f"Fortigate API request failed after {retry_state.attempt_number}/{self.retry_attempts} attempts with {type(exception).__name__ if exception is not None else 'unknown exception'}: {exception}. Request: {method} {url}",
+                f"Fortigate API request failed after {retry_state.attempt_number}/{self.retry_attempts} attempts "
+                f"with {type(exception).__name__ if exception is not None else 'unknown exception'}: {exception}. "
+                f"Request: {method} {url}",
                 exc_info=exc_info,
             )
             return outcome.result()
@@ -1105,10 +1117,11 @@ class FortigateClient(BaseModel):
         response = outcome.result()
         retry_reason = self._retry_response_reason(response) or "retryable response"
         logger.error(
-            f"Fortigate API request still returned {retry_reason} after {retry_state.attempt_number}/{self.retry_attempts} attempts: {method} {url}. Body: {self._response_body_preview(response)}"
+            f"Fortigate API request still returned {retry_reason} after {retry_state.attempt_number}"
+            f"/{self.retry_attempts} attempts: {method} {url}. Body: {self._response_body_preview(response)}"
         )
         return response
-    
+
     def _retrying(self) -> Retrying:
         """Build the Tenacity retry controller for authenticated requests.
 
@@ -1123,11 +1136,15 @@ class FortigateClient(BaseModel):
             retry_error_callback=self._last_retry_result,
             reraise=True,
         )
-    
+
     @staticmethod
     def _send_request(method: Literal["GET", "POST"], url: str, **kwargs: Any) -> Response:
-        return requests.request(method, url, **kwargs)
-    
+        # HACK: bypassing SSL warnings, this code owner should fix it in the future!
+        with catch_warnings():
+            simplefilter("ignore", category=InsecureRequestWarning)
+            res = requests.request(method, url, **kwargs)
+        return res
+
     def request(
         self,
         method: Literal["GET", "POST"],
@@ -1149,7 +1166,7 @@ class FortigateClient(BaseModel):
         headers = dict(kwargs.pop("headers", {}))
         headers["Authorization"] = f"Bearer {self.api_token}"
         return self._retrying()(self._send_request, method, url, headers=headers, **kwargs)
-    
+
     def get(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``GET`` request to the Fortigate API.
 
@@ -1161,7 +1178,7 @@ class FortigateClient(BaseModel):
             The response object returned by the underlying HTTP request.
         """
         return self.request("GET", endpoint, **kwargs)
-    
+
     def post(self, endpoint: str, **kwargs: Any) -> Response:
         """Send an authenticated ``POST`` request to the Fortigate API.
 
