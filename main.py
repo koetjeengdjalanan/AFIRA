@@ -150,12 +150,7 @@ def _run_fortigate_fetcher(
                 fetcher_items, fetcher_points = _require_fetcher_result(fetcher=fetcher, result=func(api_client))
                 res.update({fetcher: fetcher_items})
                 res_points.extend(fetcher_points)
-                logger.debug(
-                    "Fetcher %s returned %s items and %s points",
-                    fetcher,
-                    len(fetcher_items),
-                    len(fetcher_points)
-                )
+                logger.debug(f"Fetcher {fetcher} returned {len(fetcher_items)} items and {len(fetcher_points)} points")
             except Exception as e:
                 logger.error(f"Fetcher {fetcher} failed with error: {e}. Aborting AFIRA run.")
                 raise
@@ -168,28 +163,22 @@ def _run_fortigate_fetcher(
                 try:
                     logger.info(f"Running VDOM-specific fetcher: {fetcher} for VDOM: {vdom}")
                     fetcher_items, fetcher_points = _require_fetcher_result(
-                        fetcher=fetcher,
-                        result=func(api_client, vdom)
+                        fetcher=fetcher, result=func(api_client, vdom)
                     )
                     vdom_res.update({fetcher: fetcher_items})
                     res_points.extend(fetcher_points)
                     logger.debug(
-                        "VDOM-specific Fetcher %s for VDOM %s returned %s items and %s points",
-                        fetcher,
-                        vdom,
-                        len(fetcher_items),
-                        len(fetcher_points)
+                        f"VDOM-specific Fetcher {fetcher} for VDOM {vdom} returned {len(fetcher_items)} items and "
+                        f"{len(fetcher_points)} points"
                     )
                 except Exception as e:
                     logger.warning(
-                        "VDOM-specific Fetcher %s for VDOM %s failed with error: %s. Continuing with other fetchers.",
-                        fetcher,
-                        vdom,
-                        e,
+                        f"VDOM-specific Fetcher {fetcher} for VDOM {vdom} failed with error: {e}. Continuing with "
+                        "other fetchers."
                     )
 
-            sla_configuration = cast(list[Any], vdom_res.get("sdwan_health_check", []))
-            list_of_maximum_bandwidth = cast(list[Any], vdom_res.get("firewall_traffic_shapper", []))
+            sla_configuration = cast(dict[str, Any], vdom_res.get("sdwan_health_check", []))
+            list_of_maximum_bandwidth = cast(dict[str, Any], vdom_res.get("firewall_traffic_shapper", []))
 
             # Run VDOM-specific fetchers that require data from other VDOM-specific fetchers
             for fetcher, func in dependant_vdom_specific_fetchers.items():
@@ -202,22 +191,13 @@ def _run_fortigate_fetcher(
                 try:
                     logger.info(f"Running VDOM-specific fetcher: {fetcher} for VDOM: {vdom}")
                     _, fetcher_points = _require_fetcher_result(
-                        fetcher=fetcher,
-                        result=func(api_client, vdom, extra_arg)
+                        fetcher=fetcher, result=func(api_client, vdom, extra_arg)
                     )
                     res_points.extend(fetcher_points)
-                    logger.debug(
-                        "Fetcher %s for VDOM %s returned %s points",
-                        fetcher,
-                        vdom,
-                        len(fetcher_points)
-                    )
+                    logger.debug(f"Fetcher {fetcher} for VDOM {vdom} returned {len(fetcher_points)} points")
                 except Exception as e:
                     logger.warning(
-                        "Fetcher %s for VDOM %s failed with error: %s. Continuing with other VDOMs.",
-                        fetcher,
-                        vdom,
-                        e
+                        f"Fetcher {fetcher} for VDOM {vdom} failed with error: {e}. Continuing with other VDOMs."
                     )
 
         logger.debug("Start HA member-specific fetchers loop")
@@ -228,33 +208,21 @@ def _run_fortigate_fetcher(
             for fetcher, func in ha_member_specific_fetchers.items():
                 try:
                     logger.info(
-                        "Running HA member-specific fetcher: %s for HA member with serial number: %s",
-                        fetcher,
-                        serial_no,
+                        f"Running HA member-specific fetcher: {fetcher} for HA member with serial number: {serial_no}"
                     )
                     _, fetcher_points = _require_fetcher_result(
                         fetcher=fetcher,
-                        result=func(
-                            api_client,
-                            serial_no,
-                            vdoms_for_member,
-                            env_vars.loop_sleep_seconds
-                        )
+                        result=func(api_client, serial_no, vdoms_for_member, env_vars.loop_sleep_seconds),
                     )
                     res_points.extend(fetcher_points)
                     logger.debug(
-                        "HA member-specific Fetcher %s for HA member with serial number %s returned %s points",
-                        fetcher,
-                        serial_no,
-                        len(fetcher_points)
+                        f"HA member-specific Fetcher {fetcher} for HA member with serial number {serial_no} "
+                        f"returned {len(fetcher_points)} points"
                     )
                 except Exception as e:
                     logger.warning(
-                        "HA member-specific Fetcher %s for HA member with serial number %s"
-                        " failed with error: %s. Continuing with other HA members.",
-                        fetcher,
-                        serial_no,
-                        e,
+                        f"HA member-specific Fetcher {fetcher} for HA member with serial number {serial_no}"
+                        f" failed with error: {e}. Continuing with other HA members.",
                     )
 
         logger.debug("Start interface-specific fetchers loop")
@@ -274,36 +242,21 @@ def _run_fortigate_fetcher(
             for fetcher, func in interface_specific_fetchers.items():
                 try:
                     logger.info(
-                        "Running interface-specific fetcher: %s for interface: %s in VDOM: %s",
-                        fetcher,
-                        interface_name,
-                        interface_vdom,
+                        f"Running interface-specific fetcher: {fetcher} for interface: {interface_name} "
+                        f"in VDOM: {interface_vdom}",
                     )
                     _, fetcher_points = _require_fetcher_result(
-                        fetcher=fetcher,
-                        result=func(
-                            api_client,
-                            interface_vdom,
-                            interface_name,
-                            interface_alias
-                        )
+                        fetcher=fetcher, result=func(api_client, interface_vdom, interface_name, interface_alias)
                     )
                     res_points.extend(fetcher_points)
                     logger.debug(
-                        "Interface-specific Fetcher %s for interface %s in VDOM %s returned %s points",
-                        fetcher,
-                        interface_name,
-                        interface_vdom,
-                        len(fetcher_points)
+                        f"Interface-specific Fetcher {fetcher} for interface {interface_name} in "
+                        f"VDOM {interface_vdom} returned {len(fetcher_points)} points"
                     )
                 except Exception as e:
                     logger.warning(
-                        "Interface-specific Fetcher %s for interface %s in VDOM %s"
-                        " failed with error: %s. Continuing with other interfaces.",
-                        fetcher,
-                        interface_name,
-                        interface_vdom,
-                        e,
+                        f"Interface-specific Fetcher {fetcher} for interface {interface_name} in "
+                        f"VDOM {interface_vdom} failed with error: {e}. Continuing with other interfaces.",
                     )
 
     return res_points
@@ -361,7 +314,7 @@ def _run_aruba_fetcher(credentials: dict[str, Any], logger: logging.Logger) -> l
                     logger.info(f"Running site details fetcher: {fetcher}")
                     points = func(aruba_api, site_id)
                     res_points.extend(points)
-                    logger.debug("Site details fetcher %s returned %s points: %s", fetcher, len(points), points)
+                    logger.debug(f"Site details fetcher {fetcher} returned {len(points)} points: {points}")
                 except Exception as e:
                     logger.warning(
                         f"Site details fetcher {fetcher} failed with error: {e}. Continuing with other fetchers."
@@ -372,7 +325,7 @@ def _run_aruba_fetcher(credentials: dict[str, Any], logger: logging.Logger) -> l
                 logger.info(f"Running WLAN details fetcher for WLAN: {wlan}")
                 points = wlan_trhougput_trends(aruba_api, wlan)
                 res_points.extend(points)
-                logger.debug("WLAN details fetcher for %s returned %s points: %s", wlan, len(points), points)
+                logger.debug(f"WLAN details fetcher for {wlan} returned {len(points)} points: {points}")
             except Exception as e:
                 logger.warning(f"WLAN details fetcher for {wlan} failed with error: {e}. Continuing with other WLANs.")
         logger.debug("Start Device Hw Details Fetcher loop")
@@ -388,21 +341,18 @@ def _run_aruba_fetcher(credentials: dict[str, Any], logger: logging.Logger) -> l
                     continue
                 for device_details, func in device_details_func.get(device_type, {}).items():
                     logger.info(
-                        f"Running device details fetcher {device_details}"
+                        f"Running device details fetcher {device_details} "
                         f"for device with serial number: {serial_number}"
                     )
                     points = func(aruba_api, serial_number)
                     res_points.extend(points)
                     logger.debug(
-                        "Device details fetcher %s for device %s returned %s points: %s",
-                        device_details,
-                        serial_number,
-                        len(points),
-                        points,
+                        f"Device details fetcher {device_details} for device {serial_number} "
+                        f"returned {len(points)} points: {points}"
                     )
             except Exception as e:
                 logger.warning(
-                    f"Device details fetcher for {serial_number} failed with error: {e}."
+                    f"Device details fetcher for {serial_number} failed with error: {e}. "
                     "Continuing with other devices."
                 )
 
@@ -431,7 +381,7 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
 
     if not fetcher_tasks:
         logger.warning("No valid credentials were found. Skipping all fetchers.")
-        logger.debug("Finished all fetchers. Total points collected: %s", len(res_points))
+        logger.debug(f"Finished all fetchers. Total points collected: {len(res_points)}")
         return len(res_points)
 
     with ThreadPoolExecutor(max_workers=len(fetcher_tasks), thread_name_prefix="AFIRA-Fetcher") as executor:
@@ -442,9 +392,9 @@ def run_once(env_vars: EnvironmentsVariables) -> int:
             try:
                 fetcher_points = future.result()
                 res_points.extend(fetcher_points)
-                logger.info("Fetcher %s completed with %s points.", fetcher_name, len(fetcher_points))
+                logger.info(f"Fetcher {fetcher_name} completed with {len(fetcher_points)} points.")
             except Exception:
-                logger.exception("Fetcher %s failed. Aborting AFIRA run.", fetcher_name)
+                logger.exception(f"Fetcher {fetcher_name} failed. Aborting AFIRA run.")
                 for pending_future in futures:
                     if pending_future is not future:
                         pending_future.cancel()
@@ -462,7 +412,7 @@ def run_forever(env_vars: EnvironmentsVariables, shutdown_event: threading.Event
     logger = logging.getLogger("AFIRA.Main")
     iteration: int = 0
 
-    logger.info("AFIRA loop started with %s seconds between iterations.", env_vars.loop_sleep_seconds)
+    logger.info(f"AFIRA loop started with {env_vars.loop_sleep_seconds} seconds between iterations.")
 
     while not shutdown_event.is_set():
         start_time = datetime.now()
@@ -471,22 +421,18 @@ def run_forever(env_vars: EnvironmentsVariables, shutdown_event: threading.Event
             logger.info("Starting AFIRA iteration")
             point_count = run_once(env_vars=env_vars)
             logger.info(
-                "AFIRA iteration completed at %s with %s points.",
-                precisedelta(datetime.now() - start_time),
-                point_count,
+                f"AFIRA iteration completed at {precisedelta(datetime.now() - start_time)} with {point_count} points."
             )
         except Exception:
             logger.exception(
-                "AFIRA iteration %s failed. Sleeping %s seconds before retrying. After duration: %s",
-                iteration,
-                env_vars.loop_sleep_seconds,
-                precisedelta(datetime.now() - start_time),
+                f"AFIRA iteration {iteration} failed. Sleeping {env_vars.loop_sleep_seconds} seconds before retrying. "
+                f"After duration: {precisedelta(datetime.now() - start_time)}."
             )
 
         if shutdown_event.is_set():
             break
 
-        logger.info("AFIRA sleeping %s seconds before the next iteration.", env_vars.loop_sleep_seconds)
+        logger.info(f"AFIRA sleeping {env_vars.loop_sleep_seconds} seconds before the next iteration.")
         shutdown_event.wait(timeout=int(env_vars.loop_sleep_seconds))
 
     logger.info("AFIRA loop stopped.")
@@ -501,7 +447,7 @@ def _build_shutdown_signal_handler(shutdown_event: threading.Event, logger: logg
         except ValueError:
             signal_name = str(signum)
 
-        logger.info("AFIRA received shutdown signal %s. Exiting after the current iteration.", signal_name)
+        logger.info(f"AFIRA received shutdown signal {signal_name}. Exiting after the current iteration.")
         shutdown_event.set()
 
     return _handle_shutdown_signal
