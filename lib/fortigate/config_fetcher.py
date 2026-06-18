@@ -1,3 +1,5 @@
+"""Fortigate configuration fetchers for system interface, VDOMs, traffic shaper, and SD-WAN."""
+
 import json
 from typing import Any
 
@@ -12,9 +14,10 @@ def system_interface(api_client: FortigateClient) -> tuple[list[dict[str, Any]],
 
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
-        
+
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of dictionaries with system interface information and a list of InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of dictionaries
+            with system interface information and a list of InfluxDB points.
     """
     interfaces: list[dict[str, Any]] = []
     points: list[Point] = []
@@ -24,7 +27,6 @@ def system_interface(api_client: FortigateClient) -> tuple[list[dict[str, Any]],
         res = api_client.get(
             "/api/v2/cmdb/system/interface",
             params={"start": start, "count": 100},
-            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
         res_json = res.json()
 
@@ -43,7 +45,7 @@ def system_interface(api_client: FortigateClient) -> tuple[list[dict[str, Any]],
                 "vdom": item.get("vdom", ""),
                 "monitor-bandwidth": item.get("monitor-bandwidth", "disable")
             })
-            
+
             point = (
                 Point("interface_metrics")
                 .tag("interface_name", item.get("name", "unknown"))
@@ -67,7 +69,7 @@ def vdoms(api_client: FortigateClient) -> tuple[list[str], list[Point]]:
 
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
-        
+
     Returns:
         tuple[list[str], list[Point]]: A tuple containing a list of VDOM names and a list of InfluxDB points.
     """
@@ -79,7 +81,6 @@ def vdoms(api_client: FortigateClient) -> tuple[list[str], list[Point]]:
         res = api_client.get(
             "/api/v2/cmdb/system/vdom",
             params={"start": start, "count": 100},
-            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
         res_json = res.json()
 
@@ -115,9 +116,10 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[di
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
         vdom (str): The VDOM for which to fetch the traffic shaper information.
-        
+
     Returns:
-        tuple[dict[str, int], list[Point]]: A tuple containing a dictionary with maximum bandwidth information and a list of InfluxDB points.
+        tuple[dict[str, int], list[Point]]: A tuple containing a dictionary with maximum
+            bandwidth information and a list of InfluxDB points.
     """
     traffic_shapers: list[dict[str, Any]] = []
     list_of_maximum_bandwidth: dict[str, int] = {}
@@ -128,7 +130,6 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[di
         res = api_client.get(
             "/api/v2/cmdb/firewall.shaper/traffic-shaper",
             params={"vdom": vdom, "start": start, "count": 100},
-            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
         res_json = res.json()
 
@@ -152,7 +153,7 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[di
             q_static = item.get("q_static", False)
             q_global_entry = item.get("q_global_entry", False)
             q_no_edit = item.get("q_no_edit", False)
-            
+
             list_of_maximum_bandwidth[q_origin_key] = maximum_bandwidth
 
             traffic_shapers.append({
@@ -187,8 +188,8 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[di
                 "q_name": item.get("q_name", ""),
                 "q_mkey_type": item.get("q_mkey_type", ""),
                 "q_no_edit": q_no_edit,
-            }) 
-            
+            })
+
             point = (
                 Point("fortigate_traffic_shaper")
                 .tag("serial_no", serial_no)
@@ -212,7 +213,7 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[di
             break
 
         start = next_idx
-    
+
     return list_of_maximum_bandwidth, points
 
 
@@ -223,9 +224,10 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[dict[str
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
         vdom (str): The VDOM for which to fetch the SD-WAN health check information.
-        
+
     Returns:
-        tuple[dict[str, Any], list[Point]]: A tuple containing a dictionary with SD-WAN health check information and a list of InfluxDB points.
+        tuple[dict[str, Any], list[Point]]: A tuple containing a dictionary with SD-WAN
+            health check information and a list of InfluxDB points.
     """
     health_checks: list[dict[str, Any]] = []
     sla_configuration: dict[str, Any] = {}
@@ -236,13 +238,12 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[dict[str
         res = api_client.get(
             "/api/v2/cmdb/system/sdwan/health-check",
             params={
-                "vdom": vdom, 
-                "start": start, 
-                "count": 100, 
-                "datasource": True, 
+                "vdom": vdom,
+                "start": start,
+                "count": 100,
+                "datasource": True,
                 "with_meta": True
             },
-            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
         res_json = res.json()
 
@@ -367,17 +368,17 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[dict[str
             sla_thresholds = {}
             for sla in sla_entries:
                 sla_id = sla.get("id", 0)
-                
+
                 latency_threshold = sla.get("latency-threshold", 0)
                 jitter_threshold = sla.get("jitter-threshold", 0)
                 packetloss_threshold = sla.get("packetloss-threshold", 0)
-                
+
                 sla_thresholds[sla_id] = {
                     "latency_threshold": latency_threshold,
                     "jitter_threshold": jitter_threshold,
                     "packetloss_threshold": packetloss_threshold,
                 }
-                
+
                 sla_point = (
                     Point("fortigate_sdwan_health_check_sla")
                     .tag("serial_no", serial_no)
@@ -392,7 +393,7 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[dict[str
                     .field("priority_out_sla", sla.get("priority-out-sla", 0))
                 )
                 points.append(sla_point)
-            
+
             sla_configuration[name] = {
                 "protocol": protocol,
                 "server": server,

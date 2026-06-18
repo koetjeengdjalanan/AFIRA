@@ -1,5 +1,7 @@
+"""Fortigate metric fetchers: resource usage, licensing, vWAN, FortiView, routing, and history."""
+
 import json
-from typing import Any
+from typing import Any, cast
 
 from influxdb_client.client.write.point import Point
 from influxdb_client.domain.write_precision import WritePrecision
@@ -21,7 +23,8 @@ def system_resource_usage(
         scope (str): The resource usage scope.
 
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing system resource usage dictionaries and InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing system resource usage
+            dictionaries and InfluxDB points.
     """
     params: dict[str, str] = {"scope": scope}
     if vdom:
@@ -30,7 +33,6 @@ def system_resource_usage(
     res = api_client.get(
         "/api/v2/monitor/system/resource/usage",
         params=params,
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -51,15 +53,18 @@ def system_resource_usage(
             if not isinstance(resource_entry, dict):
                 continue
 
-            current = resource_entry.get("current", 0)
+            entry_dict = cast(dict[str, int], resource_entry)
+            current = entry_dict.get("current", 0)
 
-            resource_items.append({
-                "resource": resource_name,
-                "resource_index": resource_index,
-                "vdom": response_vdom,
-                "serial": serial_no,
-                "current": current
-            })
+            resource_items.append(
+                {
+                    "resource": resource_name,
+                    "resource_index": resource_index,
+                    "vdom": response_vdom,
+                    "serial": serial_no,
+                    "current": current,
+                }
+            )
 
             point = (
                 Point("fortigate_system_resource_usage")
@@ -83,8 +88,10 @@ def license_status(api_client: FortigateClient) -> tuple[list[dict[str, Any]], l
         vdom (str): The VDOM for which to fetch the license status information.
 
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing current license dictionaries and a list of InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing current license
+            dictionaries and a list of InfluxDB points.
     """
+
     def normalize_key(key: str) -> str:
         return key.replace("-", "_").replace(" ", "_")
 
@@ -96,11 +103,7 @@ def license_status(api_client: FortigateClient) -> tuple[list[dict[str, Any]], l
         return None
 
     def expiration_fields(fields: dict[str, str | int | float]) -> dict[str, str | int | float]:
-        return {
-            key: value
-            for key, value in fields.items()
-            if ("expires" == key)
-        }
+        return {key: value for key, value in fields.items() if ("expires" == key)}
 
     def is_currently_used_license(fields: dict[str, str | int | float]) -> bool:
         status = str(fields.get("status", "")).strip().lower()
@@ -125,7 +128,7 @@ def license_status(api_client: FortigateClient) -> tuple[list[dict[str, Any]], l
             if field_value is not None:
                 fields[normalize_key(key)] = field_value
 
-        current_expiration_fields: dict[str, int] = expiration_fields(fields)
+        current_expiration_fields = expiration_fields(fields)
 
         if fields:
             record = {
@@ -159,10 +162,7 @@ def license_status(api_client: FortigateClient) -> tuple[list[dict[str, Any]], l
         for nested_key, nested_value in nested_items:
             flatten_license_service(nested_key, nested_value, parent_path=component)
 
-    res = api_client.get(
-        "/api/v2/monitor/license/status",
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
-    )
+    res = api_client.get("/api/v2/monitor/license/status")
     res_json = res.json()
 
     if not res.ok or "results" not in res_json:
@@ -180,7 +180,9 @@ def license_status(api_client: FortigateClient) -> tuple[list[dict[str, Any]], l
     return license_items, points
 
 
-def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration: dict[str, Any]) -> tuple[list[dict[str, Any]], list[Point]]:
+def vwan_health_check(
+    api_client: FortigateClient, vdom: str, sla_configuration: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches virtual WAN health check information from the Fortigate API.
 
@@ -190,12 +192,12 @@ def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration:
         sla_configuration (dict[str, Any]): The SLA configuration dictionary.
 
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a flattened list of virtual WAN health check dictionaries and a list of InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a flattened list of
+            virtual WAN health check dictionaries and a list of InfluxDB points.
     """
     res = api_client.get(
         "/api/v2/monitor/virtual-wan/health-check",
         params={"vdom": vdom},
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -213,7 +215,9 @@ def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration:
             continue
 
         sla_configuration_entry = sla_configuration.get(health_check_name, {})
-        sla_thresholds = sla_configuration_entry.get("sla_thresholds", {}) if isinstance(sla_configuration_entry, dict) else {}
+        sla_thresholds = (
+            sla_configuration_entry.get("sla_thresholds", {}) if isinstance(sla_configuration_entry, dict) else {}
+        )
 
         for interface_name, metrics in members.items():
             if not isinstance(metrics, dict):
@@ -286,9 +290,21 @@ def vwan_health_check(api_client: FortigateClient, vdom: str, sla_configuration:
                 if not isinstance(target, int):
                     continue
 
-                latency_threshold = float(sla_thresholds.get(target, {}).get("latency-threshold", 0.0)) if isinstance(sla_thresholds, dict) else 0.0
-                jitter_threshold = float(sla_thresholds.get(target, {}).get("jitter-threshold", 0.0)) if isinstance(sla_thresholds, dict) else 0.0
-                packetloss_threshold = float(sla_thresholds.get(target, {}).get("packetloss-threshold", 0.0)) if isinstance(sla_thresholds, dict) else 0.0
+                latency_threshold = (
+                    float(sla_thresholds.get(target, {}).get("latency-threshold", 0.0))
+                    if isinstance(sla_thresholds, dict)
+                    else 0.0
+                )
+                jitter_threshold = (
+                    float(sla_thresholds.get(target, {}).get("jitter-threshold", 0.0))
+                    if isinstance(sla_thresholds, dict)
+                    else 0.0
+                )
+                packetloss_threshold = (
+                    float(sla_thresholds.get(target, {}).get("packetloss-threshold", 0.0))
+                    if isinstance(sla_thresholds, dict)
+                    else 0.0
+                )
 
                 health_check_record["sla_target"] = target
                 health_check_record["latency_threshold"] = latency_threshold
@@ -337,13 +353,15 @@ def fortiview_realtime_statistics(
     Args:
         api_client (FortigateClient): An instance of the FortigateClient to interact with the API.
         vdom (str): The VDOM for which to fetch FortiView realtime statistics.
+        list_of_maximum_bandwidth (dict[str, int]): Mapping of shaper name to maximum bandwidth (kbps).
         sort_by (str): The field used to sort realtime statistics.
         ip_version (str): The IP version filter.
         count (int): The maximum number of realtime statistic records to fetch.
         report_by (str | None): Optional FortiView report grouping.
 
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing FortiView realtime statistic dictionaries and InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing FortiView realtime
+            statistic dictionaries and InfluxDB points.
     """
     params: dict[str, str | int] = {
         "report_by": report_by,
@@ -358,7 +376,6 @@ def fortiview_realtime_statistics(
     res = api_client.get(
         "/api/v2/monitor/fortiview/realtime-statistics",
         params=params,
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -503,7 +520,6 @@ def router_ipv4(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, 
     res = api_client.get(
         "/api/v2/monitor/router/ipv4",
         params={"vdom": vdom},
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -532,21 +548,23 @@ def router_ipv4(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, 
         non_rc_gateway = route.get("non_rc_gateway", "")
         interface = route.get("interface", "")
 
-        routes.append({
-            "vdom": response_vdom,
-            "serial": serial_no,
-            "ip_version": ip_version,
-            "type": route_type,
-            "origin": origin,
-            "ip_mask": ip_mask,
-            "distance": distance,
-            "metric": metric,
-            "priority": priority,
-            "vrf": vrf,
-            "gateway": gateway,
-            "non_rc_gateway": non_rc_gateway,
-            "interface": interface,
-        })
+        routes.append(
+            {
+                "vdom": response_vdom,
+                "serial": serial_no,
+                "ip_version": ip_version,
+                "type": route_type,
+                "origin": origin,
+                "ip_mask": ip_mask,
+                "distance": distance,
+                "metric": metric,
+                "priority": priority,
+                "vrf": vrf,
+                "gateway": gateway,
+                "non_rc_gateway": non_rc_gateway,
+                "interface": interface,
+            }
+        )
 
         point = (
             Point("fortigate_router_ipv4")
@@ -577,12 +595,12 @@ def vwan_interface_log(api_client: FortigateClient, vdom: str) -> tuple[list[dic
         vdom (str): The VDOM for which to fetch virtual WAN interface logs.
 
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of interface log dictionaries and a list of InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of interface log
+            dictionaries and a list of InfluxDB points.
     """
     res = api_client.get(
         "/api/v2/monitor/virtual-wan/interface-log",
         params={"vdom": vdom},
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -612,7 +630,7 @@ def vwan_interface_log(api_client: FortigateClient, vdom: str) -> tuple[list[dic
             bi_bandwidth = log.get("bi_bandwidth", 0)
             tx_bytes = log.get("tx_bytes", 0)
             rx_bytes = log.get("rx_bytes", 0)
-            egress_queue = log.get("egress_queue", [])
+            log.get("egress_queue", [])
 
             interface_log = {
                 "interface": interface_name,
@@ -623,7 +641,7 @@ def vwan_interface_log(api_client: FortigateClient, vdom: str) -> tuple[list[dic
                 "rx_bandwidth": rx_bandwidth,
                 "bi_bandwidth": bi_bandwidth,
                 "tx_bytes": tx_bytes,
-                "rx_bytes": rx_bytes
+                "rx_bytes": rx_bytes,
             }
             interface_logs.append(interface_log)
 
@@ -646,9 +664,7 @@ def vwan_interface_log(api_client: FortigateClient, vdom: str) -> tuple[list[dic
 
 
 def vwan_sla_logs(
-    api_client: FortigateClient, 
-    vdom: str, 
-    sla_configuration: dict[str, Any]
+    api_client: FortigateClient, vdom: str, sla_configuration: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches virtual WAN SLA log information from the Fortigate API.
@@ -659,17 +675,12 @@ def vwan_sla_logs(
         sla_configuration (dict[str, Any]): The SLA configuration dictionary.
 
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of SLA log dictionaries and a list of InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of SLA log
+            dictionaries and a list of InfluxDB points.
     """
     res = api_client.get(
         "/api/v2/monitor/virtual-wan/sla-log",
-        params={
-            "vdom": vdom, 
-            "latest": True, 
-            "skip_vpn_child": True, 
-            "include_sla_targets_met": True
-        },
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
+        params={"vdom": vdom, "latest": True, "skip_vpn_child": True, "include_sla_targets_met": True},
     )
     res_json = res.json()
 
@@ -691,7 +702,9 @@ def vwan_sla_logs(
         interface_name = sla_entry.get("interface", "unknown")
         sla_protocol = sla_configuration_entry.get("protocol", "") if isinstance(sla_configuration_entry, dict) else ""
         sla_servers = sla_configuration_entry.get("server", "") if isinstance(sla_configuration_entry, dict) else ""
-        sla_thresholds = sla_configuration_entry.get("sla_thresholds", {}) if isinstance(sla_configuration_entry, dict) else {}
+        sla_thresholds = (
+            sla_configuration_entry.get("sla_thresholds", {}) if isinstance(sla_configuration_entry, dict) else {}
+        )
         logs = sla_entry.get("logs", [])
 
         if not logs:
@@ -724,7 +737,7 @@ def vwan_sla_logs(
             jitter = float(log.get("jitter", 0.0))
             packetloss = float(log.get("packetloss", 0.0))
             sla_targets_met = log.get("sla_targets_met", [])
-            
+
             log_record = {
                 "name": sla_name,
                 "interface": interface_name,
@@ -737,7 +750,7 @@ def vwan_sla_logs(
                 "jitter": jitter,
                 "packetloss": packetloss,
             }
-            
+
             if not sla_targets_met:
                 log_record["sla_target"] = "none"
                 log_record["latency_threshold"] = 0.0
@@ -749,16 +762,28 @@ def vwan_sla_logs(
             for target in sla_targets_met:
                 if not isinstance(target, int):
                     continue
-                
-                latency_threshold = float(sla_thresholds.get(target, {}).get("latency-threshold", 0)) if isinstance(sla_thresholds, dict) else 0.0
-                jitter_threshold = float(sla_thresholds.get(target, {}).get("jitter-threshold", 0)) if isinstance(sla_thresholds, dict) else 0.0
-                packetloss_threshold = float(sla_thresholds.get(target, {}).get("packetloss-threshold", 0)) if isinstance(sla_thresholds, dict) else 0.0
-                
+
+                latency_threshold = (
+                    float(sla_thresholds.get(target, {}).get("latency-threshold", 0))
+                    if isinstance(sla_thresholds, dict)
+                    else 0.0
+                )
+                jitter_threshold = (
+                    float(sla_thresholds.get(target, {}).get("jitter-threshold", 0))
+                    if isinstance(sla_thresholds, dict)
+                    else 0.0
+                )
+                packetloss_threshold = (
+                    float(sla_thresholds.get(target, {}).get("packetloss-threshold", 0))
+                    if isinstance(sla_thresholds, dict)
+                    else 0.0
+                )
+
                 log_record["sla_target"] = target
                 log_record["latency_threshold"] = latency_threshold
                 log_record["jitter_threshold"] = jitter_threshold
                 log_record["packetloss_threshold"] = packetloss_threshold
-                
+
                 point = (
                     Point("fortigate_vwan_sla_log")
                     .tag("serial_no", serial_no)
@@ -784,9 +809,7 @@ def vwan_sla_logs(
 
 
 def traffic_history_interface(
-    api_client: FortigateClient, 
-    vdom: str, interface_name: str, 
-    interface_alias: str
+    api_client: FortigateClient, vdom: str, interface_name: str, interface_alias: str
 ) -> tuple[list[dict[str, Any]], list[Point]]:
     """
     Fetches system traffic history information for an interface from the Fortigate API.
@@ -798,12 +821,12 @@ def traffic_history_interface(
         interface_alias (str): The interface alias used for tagging traffic history points.
 
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of traffic history dictionaries and a list of InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing a list of traffic history
+            dictionaries and a list of InfluxDB points.
     """
     res = api_client.get(
         "/api/v2/monitor/system/traffic-history/interface",
         params={"vdom": vdom, "interface": interface_name, "time_period": "hour"},
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -897,6 +920,7 @@ def traffic_history_interface(
 
     return traffic_history, points
 
+
 def historical_statistics(
     api_client: FortigateClient,
     vdom: str,
@@ -925,7 +949,8 @@ def historical_statistics(
         filter_params (dict[str, Any] | None): Optional filter parameters serialized as JSON.
 
     Returns:
-        tuple[list[dict[str, Any]], list[Point]]: A tuple containing historical statistic dictionaries and InfluxDB points.
+        tuple[list[dict[str, Any]], list[Point]]: A tuple containing historical statistic
+            dictionaries and InfluxDB points.
     """
     params: dict[str, Any] = {
         "report_by": report_by,
@@ -942,7 +967,6 @@ def historical_statistics(
     res = api_client.get(
         "/api/v2/monitor/fortiview/historical-statistics",
         params=params,
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -964,7 +988,6 @@ def historical_statistics(
         lookup_res = api_client.get(
             "/api/v2/cmdb/application/name",
             params={"filter": f"id=={app_id}", "format": "name", "vdom": vdom},
-            verify=False,
         )
         if lookup_res.ok:
             lookup_json = lookup_res.json()
