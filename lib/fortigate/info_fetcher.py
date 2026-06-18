@@ -21,7 +21,6 @@ def ha_checksum(api_client: FortigateClient) -> tuple[list[dict[str, list[str]]]
     """
     res = api_client.get(
         "/api/v2/monitor/system/ha-checksums",
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -77,10 +76,7 @@ def firmware(api_client: FortigateClient) -> tuple[dict[str, Any], list[Point]]:
             - A dictionary with firmware information.
             - A list of InfluxDB Points indicating current firmware version and update availability.
     """
-    res = api_client.get(
-        "/api/v2/monitor/system/firmware",
-        verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
-    )
+    res = api_client.get("/api/v2/monitor/system/firmware")
     res_json = res.json()
 
     if not res.ok or "results" not in res_json:
@@ -130,10 +126,7 @@ def log_device_state(api_client: FortigateClient) -> tuple[dict[str, str|bool|di
             - A dictionary with log device state information.
             - A list of InfluxDB Points indicating log device states.
     """
-    res = api_client.get(
-        "/api/v2/monitor/log/device/state",
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
-    )
+    res = api_client.get("/api/v2/monitor/log/device/state")
     res_json = res.json()
 
     if not res.ok or "results" not in res_json:
@@ -223,7 +216,6 @@ def cooperative_security_fabric(api_client: FortigateClient) -> tuple[dict[str, 
     res = api_client.get(
         "/api/v2/monitor/system/csf",
         params={"vdom": "root", "scope": "vdom", "decode": "true"},
-        verify=False,  # Self-signed cert — replace with a trusted CA in production
     )
     res_json: dict[str, Any] = res.json()
 

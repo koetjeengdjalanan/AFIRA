@@ -33,7 +33,6 @@ def system_resource_usage(
     res = api_client.get(
         "/api/v2/monitor/system/resource/usage",
         params=params,
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -163,10 +162,7 @@ def license_status(api_client: FortigateClient) -> tuple[list[dict[str, Any]], l
         for nested_key, nested_value in nested_items:
             flatten_license_service(nested_key, nested_value, parent_path=component)
 
-    res = api_client.get(
-        "/api/v2/monitor/license/status",
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
-    )
+    res = api_client.get("/api/v2/monitor/license/status")
     res_json = res.json()
 
     if not res.ok or "results" not in res_json:
@@ -202,7 +198,6 @@ def vwan_health_check(
     res = api_client.get(
         "/api/v2/monitor/virtual-wan/health-check",
         params={"vdom": vdom},
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -381,7 +376,6 @@ def fortiview_realtime_statistics(
     res = api_client.get(
         "/api/v2/monitor/fortiview/realtime-statistics",
         params=params,
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -526,7 +520,6 @@ def router_ipv4(api_client: FortigateClient, vdom: str) -> tuple[list[dict[str, 
     res = api_client.get(
         "/api/v2/monitor/router/ipv4",
         params={"vdom": vdom},
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -608,7 +601,6 @@ def vwan_interface_log(api_client: FortigateClient, vdom: str) -> tuple[list[dic
     res = api_client.get(
         "/api/v2/monitor/virtual-wan/interface-log",
         params={"vdom": vdom},
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -689,7 +681,6 @@ def vwan_sla_logs(
     res = api_client.get(
         "/api/v2/monitor/virtual-wan/sla-log",
         params={"vdom": vdom, "latest": True, "skip_vpn_child": True, "include_sla_targets_met": True},
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -836,7 +827,6 @@ def traffic_history_interface(
     res = api_client.get(
         "/api/v2/monitor/system/traffic-history/interface",
         params={"vdom": vdom, "interface": interface_name, "time_period": "hour"},
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -977,7 +967,6 @@ def historical_statistics(
     res = api_client.get(
         "/api/v2/monitor/fortiview/historical-statistics",
         params=params,
-        verify=False,  # Disable SSL verification for self-signed certificates (not recommended for production use)
     )
     res_json = res.json()
 
@@ -999,7 +988,6 @@ def historical_statistics(
         lookup_res = api_client.get(
             "/api/v2/cmdb/application/name",
             params={"filter": f"id=={app_id}", "format": "name", "vdom": vdom},
-            verify=False,
         )
         if lookup_res.ok:
             lookup_json = lookup_res.json()

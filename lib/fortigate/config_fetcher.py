@@ -27,7 +27,6 @@ def system_interface(api_client: FortigateClient) -> tuple[list[dict[str, Any]],
         res = api_client.get(
             "/api/v2/cmdb/system/interface",
             params={"start": start, "count": 100},
-            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
         res_json = res.json()
 
@@ -82,7 +81,6 @@ def vdoms(api_client: FortigateClient) -> tuple[list[str], list[Point]]:
         res = api_client.get(
             "/api/v2/cmdb/system/vdom",
             params={"start": start, "count": 100},
-            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
         res_json = res.json()
 
@@ -132,7 +130,6 @@ def firewall_traffic_shapper(api_client: FortigateClient, vdom: str) -> tuple[di
         res = api_client.get(
             "/api/v2/cmdb/firewall.shaper/traffic-shaper",
             params={"vdom": vdom, "start": start, "count": 100},
-            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
         res_json = res.json()
 
@@ -247,7 +244,6 @@ def sdwan_health_check(api_client: FortigateClient, vdom: str) -> tuple[dict[str
                 "datasource": True,
                 "with_meta": True
             },
-            verify=False # Disable SSL verification for self-signed certificates (not recommended for production use)
         )
         res_json = res.json()
 

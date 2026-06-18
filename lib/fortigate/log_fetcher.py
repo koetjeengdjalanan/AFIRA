@@ -54,7 +54,6 @@ def log_disk_event_system(
             res = api_client.get(
                 "/api/v2/log/disk/event/system",
                 params=params,
-                verify=False,
             )
             res_json = res.json()
 
