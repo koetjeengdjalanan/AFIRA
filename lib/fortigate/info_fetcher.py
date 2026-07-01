@@ -1,6 +1,5 @@
 """Fortigate info fetchers: HA checksum, firmware, log device state, and CSF."""
 
-from datetime import datetime, timedelta
 from typing import Any
 
 from influxdb_client.client.write.point import Point
@@ -299,24 +298,13 @@ def _device_state_point(device: dict[str, Any]) -> list[Point]:
 
     state: dict[str, Any] = device.get("state", {})
 
-    current_timestamp_unix = datetime.now().timestamp() * 1000
+    snapshot_utc = state.get("snapshot_utc_time", 0)
     last_reboot = state.get("utc_last_reboot", 0)
-    uptime_ms = max(current_timestamp_unix - last_reboot, 0)
-
-    duration = timedelta(milliseconds=uptime_ms)
-    total_seconds = int(duration.total_seconds())
-
-    days = total_seconds // 86400
-    hours = (total_seconds % 86400) // 3600
-    minutes = (total_seconds % 3600) // 60
-    seconds = total_seconds % 60
-
-    uptime_text = f"{days}d {hours}h {minutes}m {seconds}s"
+    uptime_ms = max(snapshot_utc - last_reboot, 0)
 
     point = (
         Point("fortigate_csf_device_uptime")
         .tag("serial_no", serial)
         .field("uptime_ms", int(uptime_ms))
-        .field("uptime_text", uptime_text)
     )
     return [point]
