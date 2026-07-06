@@ -36,7 +36,7 @@ from lib.fortigate.config_fetcher import (
     system_interface,
     vdoms,
 )
-from lib.fortigate.info_fetcher import cooperative_security_fabric, firmware, ha_checksum
+from lib.fortigate.info_fetcher import cooperative_security_fabric, firmware, ha_checksum, interface_monitor
 from lib.fortigate.log_fetcher import log_disk_event_system
 from lib.fortigate.metric_fetcher import (
     fortiview_realtime_statistics,
@@ -127,6 +127,7 @@ def _run_fortigate_fetcher(
         "historical_statistics": historical_statistics,
         "system_resource_usage": system_resource_usage,
         "vwan_interface_log": vwan_interface_log,
+        "interface_monitor": interface_monitor
     }
     dependant_vdom_specific_fetchers: dict[str, FortigateDependantVdomFetcherFunction] = {
         "fortiview_realtime_statistics": fortiview_realtime_statistics,

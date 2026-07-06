@@ -320,3 +320,85 @@ def _device_state_point(device: dict[str, Any]) -> list[Point]:
         .field("uptime_text", uptime_text)
     )
     return [point]
+
+def interface_monitor(
+    api_client: FortigateClient,
+    vdom: str,
+) -> tuple[list[dict[str, Any]], list[Point]]:
+    """
+    Fetch per-interface live statistics from the Fortigate monitor API for a VDOM.
+
+    The endpoint response already contains the interface records for the requested VDOM,
+    so this function uses that payload directly without relying on any other interface
+    configuration helper.
+
+    Args:
+        api_client (FortigateClient): An authenticated Fortigate API client.
+        vdom (str): The VDOM name to query.
+
+    Returns:
+        tuple[list[dict[str, Any]], list[Point]]: A tuple of:
+            - A list of interface dicts built from the monitor payload.
+            - A list of InfluxDB Points, one per interface in the monitor response.
+
+    Raises:
+        Exception: If the HTTP request fails or the response body is missing ``results``.
+    """
+    res = api_client.get(
+        "/api/v2/monitor/system/interface",
+        params={"vdom": vdom}
+    )
+    res_json: dict[str, Any] = res.json()
+
+    if not res.ok or "results" not in res_json:
+        raise Exception(f"Failed to fetch interface monitor data for VDOM {vdom}: {res.text}")
+
+    monitor_results: dict[str, dict[str, Any]] = res_json.get("results", {})
+    serial_no: str = res_json.get("serial", "unknown")
+    response_vdom: str = res_json.get("vdom", vdom)
+
+    enriched: list[dict[str, Any]] = []
+    points: list[Point] = []
+
+    for interface_name, monitor_data in monitor_results.items():
+        if not isinstance(monitor_data, dict):
+            continue
+
+        name: str = monitor_data.get("name", interface_name)
+        alias: str = monitor_data.get("alias", "")
+
+        merged: dict[str, Any] = dict(monitor_data)
+        merged.setdefault("vdom", response_vdom)
+        merged.setdefault("name", name)
+        merged.setdefault("alias", alias)
+        enriched.append(merged)
+
+        link: bool = bool(monitor_data.get("link", False))
+        speed: float = float(monitor_data.get("speed", 0.0))
+        duplex: int = int(monitor_data.get("duplex", 0))
+        tx_packets: int = int(monitor_data.get("tx_packets", 0))
+        rx_packets: int = int(monitor_data.get("rx_packets", 0))
+        tx_bytes: int = int(monitor_data.get("tx_bytes", 0))
+        rx_bytes: int = int(monitor_data.get("rx_bytes", 0))
+        tx_errors: int = int(monitor_data.get("tx_errors", 0))
+        rx_errors: int = int(monitor_data.get("rx_errors", 0))
+
+        point = (
+            Point("fortigate_interface_monitor")
+            .tag("serial_no", serial_no)
+            .tag("vdom", response_vdom)
+            .tag("interface_name", name)
+            .tag("alias", alias)
+            .field("link", 1 if link else 0)
+            .field("speed", speed)
+            .field("duplex", duplex)
+            .field("tx_packets", tx_packets)
+            .field("rx_packets", rx_packets)
+            .field("tx_bytes", tx_bytes)
+            .field("rx_bytes", rx_bytes)
+            .field("tx_errors", tx_errors)
+            .field("rx_errors", rx_errors)
+        )
+        points.append(point)
+
+    return enriched, points
